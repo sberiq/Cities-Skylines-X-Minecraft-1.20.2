@@ -1,0 +1,10 @@
+.gradle/
+build/
+**/build/
+*.class
+*.dll
+*.pdb
+*.jar
+*.log
+*.hprof
+/dist/

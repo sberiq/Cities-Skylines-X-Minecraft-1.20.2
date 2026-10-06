@@ -1,0 +1,28 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{2C38EC2A-1EC9-4B9B-A318-3C8CC8E7731D}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>CitiesCraft</RootNamespace>
+    <AssemblyName>CitiesCraft</AssemblyName>
+    <TargetFrameworkVersion>v3.5</TargetFrameworkVersion>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <CITIES_SKYLINES_MANAGED Condition=" '$(CITIES_SKYLINES_MANAGED)' == '' ">$(CS1_INSTALL)\Cities_Data\Managed</CITIES_SKYLINES_MANAGED>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="ICities"><HintPath>$(CITIES_SKYLINES_MANAGED)\ICities.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Assembly-CSharp"><HintPath>$(CITIES_SKYLINES_MANAGED)\Assembly-CSharp.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="ColossalManaged"><HintPath>$(CITIES_SKYLINES_MANAGED)\ColossalManaged.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(CITIES_SKYLINES_MANAGED)\UnityEngine.dll</HintPath><Private>False</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="CitiesCraftMod.cs" />
+    <Compile Include="CitiesCraftLoadingExtension.cs" />
+    <Compile Include="BridgeClient.cs" />
+    <Compile Include="CitiesCraftOverlay.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
