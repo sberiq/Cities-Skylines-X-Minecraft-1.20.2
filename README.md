@@ -6,7 +6,7 @@ Passthrough prototype for a live Cities: Skylines city and Minecraft Java 1.20.2
 
 - Research, architecture and phase-one scaffolds are in place.
 - The loopback Bridge compiles on Java 17; its process smoke check passed both directions, finite-number validation and duplicate-role rejection.
-- The Fabric Minecraft 1.20.2 mod and Bridge build successfully. The dev log confirms Minecraft 1.20.2, Fabric Loader 0.14.22 and `citiescraft 0.1.0` loading. The Cities: Skylines 1 DLL also compiles on macOS against the installed game's managed assemblies; loading it in a live save is still to verify.
+- The Fabric Minecraft 1.20.2 mod and Bridge build successfully. The mod accepts Fabric Loader 0.14.22 or newer; its development client was verified with 0.14.22. The Cities: Skylines 1 DLL also compiles on macOS against the installed game's managed assemblies; loading it in a live save is still to verify.
 - The end-to-end Phase 2 acceptance test remains open until real Minecraft 1.20.2 and Cities clients exchange continuously in game.
 - No rendering, terrain, collision, coordinate calibration or depth integration is claimed yet.
 
