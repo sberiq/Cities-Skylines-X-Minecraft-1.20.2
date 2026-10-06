@@ -264,21 +264,21 @@ namespace CitiesCraft
                 return;
             }
 
-            _aPosition = glGetAttribLocation(_program, "aPosition");
-            _aUv = glGetAttribLocation(_program, "aUv");
-            _uCityColor = glGetUniformLocation(_program, "uCityColor");
-            _uCityDepth = glGetUniformLocation(_program, "uCityDepth");
-            _uMinecraftColor = glGetUniformLocation(_program, "uMinecraftColor");
-            _uMinecraftDepth = glGetUniformLocation(_program, "uMinecraftDepth");
-            _uHand = glGetUniformLocation(_program, "uHand");
-            _uGui = glGetUniformLocation(_program, "uGui");
-            _uZBufferParams = glGetUniformLocation(_program, "uZBufferParams");
-            _uMinecraftNear = glGetUniformLocation(_program, "uMinecraftNear");
-            _uMinecraftFar = glGetUniformLocation(_program, "uMinecraftFar");
-            _uMinecraftDepthScale = glGetUniformLocation(_program, "uMinecraftDepthScale");
-            _uHasHand = glGetUniformLocation(_program, "uHasHand");
-            _uHasGui = glGetUniformLocation(_program, "uHasGui");
-            _uPremultipliedAlpha = glGetUniformLocation(_program, "uPremultipliedAlpha");
+            _aPosition = GetAttribLocation(_program, "aPosition");
+            _aUv = GetAttribLocation(_program, "aUv");
+            _uCityColor = GetUniformLocation(_program, "uCityColor");
+            _uCityDepth = GetUniformLocation(_program, "uCityDepth");
+            _uMinecraftColor = GetUniformLocation(_program, "uMinecraftColor");
+            _uMinecraftDepth = GetUniformLocation(_program, "uMinecraftDepth");
+            _uHand = GetUniformLocation(_program, "uHand");
+            _uGui = GetUniformLocation(_program, "uGui");
+            _uZBufferParams = GetUniformLocation(_program, "uZBufferParams");
+            _uMinecraftNear = GetUniformLocation(_program, "uMinecraftNear");
+            _uMinecraftFar = GetUniformLocation(_program, "uMinecraftFar");
+            _uMinecraftDepthScale = GetUniformLocation(_program, "uMinecraftDepthScale");
+            _uHasHand = GetUniformLocation(_program, "uHasHand");
+            _uHasGui = GetUniformLocation(_program, "uHasGui");
+            _uPremultipliedAlpha = GetUniformLocation(_program, "uPremultipliedAlpha");
             if (_aPosition < 0 || _aUv < 0 || _uCityColor < 0 || _uCityDepth < 0
                 || _uMinecraftColor < 0 || _uMinecraftDepth < 0 || _uHand < 0 || _uGui < 0
                 || _uZBufferParams < 0 || _uMinecraftNear < 0 || _uMinecraftFar < 0
@@ -314,7 +314,13 @@ namespace CitiesCraft
             {
                 glBindVertexArray(_vertexArray);
                 glBindBuffer(GlArrayBuffer, _vertexBuffer);
-                glBufferData(GlArrayBuffer, new IntPtr(vertices.Length * sizeof(float)), vertices, GlStaticDraw);
+                GCHandle pinnedVertices = GCHandle.Alloc(vertices, GCHandleType.Pinned);
+                try
+                {
+                    glBufferData(GlArrayBuffer, new IntPtr(vertices.Length * sizeof(float)),
+                        pinnedVertices.AddrOfPinnedObject(), GlStaticDraw);
+                }
+                finally { pinnedVertices.Free(); }
                 glEnableVertexAttribArray((uint)_aPosition);
                 glEnableVertexAttribArray((uint)_aUv);
                 glVertexAttribPointer((uint)_aPosition, 2, GlFloat, 0, 4 * sizeof(float), IntPtr.Zero);
@@ -341,8 +347,8 @@ namespace CitiesCraft
             glGetIntegerv(GlVertexArrayBinding, out previousVao);
             glGetIntegerv(GlArrayBufferBinding, out previousArrayBuffer);
             glGetIntegerv(GlActiveTexture, out previousActiveTexture);
-            glGetIntegerv(GlViewport, previousViewport);
-            glGetBooleanv(GlColorWriteMask, previousColorMask);
+            GetIntegers(GlViewport, previousViewport);
+            GetBooleans(GlColorWriteMask, previousColorMask);
             glGetBooleanv(GlDepthWriteMask, out previousDepthMask);
 
             bool depthWasEnabled = IsEnabled(GlDepthTest);
@@ -457,12 +463,13 @@ namespace CitiesCraft
             uint shader = glCreateShader(kind);
             if (shader == 0) return 0;
 
-            IntPtr nativeSource = Marshal.StringToHGlobalAnsi(source);
-            IntPtr sourceArray = Marshal.AllocHGlobal(IntPtr.Size);
+            byte[] sourceBytes = Encoding.ASCII.GetBytes(source + "\0");
+            GCHandle pinnedSource = GCHandle.Alloc(sourceBytes, GCHandleType.Pinned);
+            IntPtr[] sourcePointers = new IntPtr[] { pinnedSource.AddrOfPinnedObject() };
+            GCHandle pinnedSourcePointers = GCHandle.Alloc(sourcePointers, GCHandleType.Pinned);
             try
             {
-                Marshal.WriteIntPtr(sourceArray, nativeSource);
-                glShaderSource(shader, 1, sourceArray, IntPtr.Zero);
+                glShaderSource(shader, 1, pinnedSourcePointers.AddrOfPinnedObject(), IntPtr.Zero);
                 glCompileShader(shader);
                 int compiled;
                 glGetShaderiv(shader, GlCompileStatus, out compiled);
@@ -476,8 +483,8 @@ namespace CitiesCraft
             }
             finally
             {
-                Marshal.FreeHGlobal(sourceArray);
-                Marshal.FreeHGlobal(nativeSource);
+                pinnedSourcePointers.Free();
+                pinnedSource.Free();
             }
         }
 
@@ -486,10 +493,8 @@ namespace CitiesCraft
             int length;
             glGetShaderiv(shader, GlInfoLogLength, out length);
             if (length <= 1) return;
-            StringBuilder message = new StringBuilder(length);
-            int written;
-            glGetShaderInfoLog(shader, length, out written, message);
-            Debug.LogWarning("CitiesCraft " + label + " compositor shader failed: " + message.ToString());
+            Debug.LogWarning("CitiesCraft " + label + " compositor shader failed: "
+                + GetShaderInfoLog(shader, length));
         }
 
         private static void LogProgramError(uint program, string label)
@@ -497,10 +502,8 @@ namespace CitiesCraft
             int length;
             glGetProgramiv(program, GlInfoLogLength, out length);
             if (length <= 1) return;
-            StringBuilder message = new StringBuilder(length);
-            int written;
-            glGetProgramInfoLog(program, length, out written, message);
-            Debug.LogWarning("CitiesCraft compositor program " + label + " failed: " + message.ToString());
+            Debug.LogWarning("CitiesCraft compositor program " + label + " failed: "
+                + GetProgramInfoLog(program, length));
         }
 
         private static bool IsEnabled(uint capability)
@@ -537,6 +540,56 @@ namespace CitiesCraft
             }
         }
 
+        private static void GetIntegers(uint name, int[] values)
+        {
+            GCHandle pinned = GCHandle.Alloc(values, GCHandleType.Pinned);
+            try { glGetIntegerv(name, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+        }
+
+        private static void GetBooleans(uint name, byte[] values)
+        {
+            GCHandle pinned = GCHandle.Alloc(values, GCHandleType.Pinned);
+            try { glGetBooleanv(name, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+        }
+
+        private static int GetAttribLocation(uint program, string name)
+        {
+            byte[] nameBytes = Encoding.ASCII.GetBytes(name + "\0");
+            GCHandle pinned = GCHandle.Alloc(nameBytes, GCHandleType.Pinned);
+            try { return glGetAttribLocation(program, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+        }
+
+        private static int GetUniformLocation(uint program, string name)
+        {
+            byte[] nameBytes = Encoding.ASCII.GetBytes(name + "\0");
+            GCHandle pinned = GCHandle.Alloc(nameBytes, GCHandleType.Pinned);
+            try { return glGetUniformLocation(program, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+        }
+
+        private static string GetShaderInfoLog(uint shader, int bufferLength)
+        {
+            byte[] log = new byte[bufferLength];
+            int written;
+            GCHandle pinned = GCHandle.Alloc(log, GCHandleType.Pinned);
+            try { glGetShaderInfoLog(shader, bufferLength, out written, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+            return Encoding.ASCII.GetString(log, 0, Math.Max(0, Math.Min(written, log.Length))).TrimEnd('\0');
+        }
+
+        private static string GetProgramInfoLog(uint program, int bufferLength)
+        {
+            byte[] log = new byte[bufferLength];
+            int written;
+            GCHandle pinned = GCHandle.Alloc(log, GCHandleType.Pinned);
+            try { glGetProgramInfoLog(program, bufferLength, out written, pinned.AddrOfPinnedObject()); }
+            finally { pinned.Free(); }
+            return Encoding.ASCII.GetString(log, 0, Math.Max(0, Math.Min(written, log.Length))).TrimEnd('\0');
+        }
+
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glCreateShader")]
         private static extern uint glCreateShader(uint type);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glShaderSource")]
@@ -546,7 +599,7 @@ namespace CitiesCraft
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetShaderiv")]
         private static extern void glGetShaderiv(uint shader, uint name, out int value);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetShaderInfoLog")]
-        private static extern void glGetShaderInfoLog(uint shader, int maxLength, out int length, StringBuilder infoLog);
+        private static extern void glGetShaderInfoLog(uint shader, int maxLength, out int length, IntPtr infoLog);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glDeleteShader")]
         private static extern void glDeleteShader(uint shader);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glCreateProgram")]
@@ -558,13 +611,13 @@ namespace CitiesCraft
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetProgramiv")]
         private static extern void glGetProgramiv(uint program, uint name, out int value);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetProgramInfoLog")]
-        private static extern void glGetProgramInfoLog(uint program, int maxLength, out int length, StringBuilder infoLog);
+        private static extern void glGetProgramInfoLog(uint program, int maxLength, out int length, IntPtr infoLog);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glDeleteProgram")]
         private static extern void glDeleteProgram(uint program);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetAttribLocation")]
-        private static extern int glGetAttribLocation(uint program, string name);
+        private static extern int glGetAttribLocation(uint program, IntPtr name);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetUniformLocation")]
-        private static extern int glGetUniformLocation(uint program, string name);
+        private static extern int glGetUniformLocation(uint program, IntPtr name);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glUniform1i")]
         private static extern void glUniform1i(int location, int value);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glUniform1f")]
@@ -584,7 +637,7 @@ namespace CitiesCraft
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glBindBuffer")]
         private static extern void glBindBuffer(uint target, uint buffer);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glBufferData")]
-        private static extern void glBufferData(uint target, IntPtr size, float[] data, uint usage);
+        private static extern void glBufferData(uint target, IntPtr size, IntPtr data, uint usage);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glDeleteBuffers")]
         private static extern void glDeleteBuffers(int count, ref uint buffers);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glEnableVertexAttribArray")]
@@ -596,11 +649,11 @@ namespace CitiesCraft
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetIntegerv")]
         private static extern void glGetIntegerv(uint name, out int value);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetIntegerv")]
-        private static extern void glGetIntegerv(uint name, int[] values);
+        private static extern void glGetIntegerv(uint name, IntPtr values);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetBooleanv")]
         private static extern void glGetBooleanv(uint name, out byte value);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glGetBooleanv")]
-        private static extern void glGetBooleanv(uint name, byte[] values);
+        private static extern void glGetBooleanv(uint name, IntPtr values);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glIsEnabled")]
         private static extern byte glIsEnabled(uint capability);
         [DllImport("/System/Library/Frameworks/OpenGL.framework/OpenGL", EntryPoint = "glEnable")]
