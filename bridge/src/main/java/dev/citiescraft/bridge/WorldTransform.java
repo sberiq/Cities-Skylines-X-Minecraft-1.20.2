@@ -46,8 +46,9 @@ final class WorldTransform {
                 minecraftOriginZ + (sine * dx + cosine * dz) / scale);
     }
 
-    double yawToCities(double minecraftYaw) { return wrapDegrees(minecraftYaw - Math.toDegrees(yawRadians)); }
-    double yawToMinecraft(double citiesYaw) { return wrapDegrees(citiesYaw + Math.toDegrees(yawRadians)); }
+    // Minecraft yaw increases toward -X; Unity Euler yaw increases toward +X.
+    double yawToCities(double minecraftYaw) { return wrapDegrees(Math.toDegrees(yawRadians) - minecraftYaw); }
+    double yawToMinecraft(double citiesYaw) { return wrapDegrees(Math.toDegrees(yawRadians) - citiesYaw); }
 
     Bounds toMinecraftBounds(double minX, double minY, double minZ,
                              double maxX, double maxY, double maxZ) {

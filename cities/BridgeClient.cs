@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net.Sockets;
@@ -16,13 +17,24 @@ namespace CitiesCraft
         private volatile TcpClient _activeClient;
         private CameraState _camera;
         private PlayerState _player;
+        private ViewState _view;
+        private int _viewReceivedAt;
         private string _latestSnapshot;
         private long _snapshotGeneration;
+        private long _inputSequence;
+        private readonly Queue<string> _inputQueue = new Queue<string>();
         private volatile float _collisionRadius = 96f;
+        private volatile float _depthScale = 1f;
 
         public bool Connected { get { return _connected; } }
         public float CollisionRadius { get { return _collisionRadius; } }
+        public float DepthScale { get { return _depthScale; } }
         public PlayerState LatestPlayer { get { lock (_lock) return _player; } }
+        public ViewState LatestView { get { lock (_lock) return _view; } }
+        public bool HasFreshView
+        {
+            get { return _viewReceivedAt != 0 && unchecked(Environment.TickCount - _viewReceivedAt) < 1500; }
+        }
 
         public void PublishCitySnapshot(string snapshot)
         {
@@ -44,6 +56,25 @@ namespace CitiesCraft
         public void PublishCamera(CameraState camera)
         {
             lock (_lock) _camera = camera;
+        }
+
+        public void PublishInput(string type, params string[] values)
+        {
+            if (String.IsNullOrEmpty(type) || values == null) return;
+            long sequence = Interlocked.Increment(ref _inputSequence) - 1;
+            StringBuilder line = new StringBuilder("INPUT\t");
+            line.Append(sequence.ToString(CultureInfo.InvariantCulture)).Append('\t').Append(type);
+            for (int i = 0; i < values.Length; i++)
+            {
+                string value = values[i] ?? String.Empty;
+                if (value.IndexOf('\t') >= 0 || value.IndexOf('\n') >= 0 || value.IndexOf('\r') >= 0) return;
+                line.Append('\t').Append(value);
+            }
+            lock (_lock)
+            {
+                if (_inputQueue.Count >= 512) _inputQueue.Dequeue();
+                _inputQueue.Enqueue(line.ToString());
+            }
         }
 
         private void Run()
@@ -76,11 +107,14 @@ namespace CitiesCraft
                         CameraState camera;
                         string snapshot;
                         long snapshotGeneration;
+                        string[] inputs;
                         lock (_lock)
                         {
                             camera = _camera;
                             snapshot = _latestSnapshot;
                             snapshotGeneration = _snapshotGeneration;
+                            inputs = _inputQueue.ToArray();
+                            _inputQueue.Clear();
                         }
                         if (camera != null)
                         {
@@ -93,7 +127,8 @@ namespace CitiesCraft
                             writer.WriteLine(snapshot);
                             sentSnapshotGeneration = snapshotGeneration;
                         }
-                        Thread.Sleep(100);
+                        for (int i = 0; i < inputs.Length; i++) writer.WriteLine(inputs[i]);
+                        Thread.Sleep(10);
                     }
                 }
                 catch (Exception)
@@ -118,18 +153,37 @@ namespace CitiesCraft
                 while (!_stopping && (line = reader.ReadLine()) != null)
                 {
                     string[] fields = line.Split('\t');
-                    if (fields.Length == 2 && fields[0] == "SETTINGS")
+                    if (fields.Length == 3 && fields[0] == "SETTINGS")
                     {
                         double radius;
+                        double scale;
                         if (Parse(fields[1], out radius) && radius >= 16.0 && radius <= 96.0)
                             _collisionRadius = (float)radius;
+                        if (Parse(fields[2], out scale) && scale > 0.0 && scale <= 64.0)
+                            _depthScale = (float)scale;
                         continue;
                     }
-                    if (fields.Length != 7 || fields[0] != "PLAYER") continue;
-                    double x, y, z, yaw, pitch;
-                    if (!Parse(fields[2], out x) || !Parse(fields[3], out y) || !Parse(fields[4], out z)
-                        || !Parse(fields[5], out yaw) || !Parse(fields[6], out pitch)) continue;
-                    lock (_lock) _player = new PlayerState(x, y, z, yaw, pitch);
+                    if (fields.Length == 7 && fields[0] == "PLAYER")
+                    {
+                        double x, y, z, yaw, pitch;
+                        if (!Parse(fields[2], out x) || !Parse(fields[3], out y) || !Parse(fields[4], out z)
+                            || !Parse(fields[5], out yaw) || !Parse(fields[6], out pitch)) continue;
+                        lock (_lock) _player = new PlayerState(x, y, z, yaw, pitch);
+                        continue;
+                    }
+                    if (fields.Length == 9 && fields[0] == "VIEW")
+                    {
+                        double x, y, z, yaw, pitch, fov, aspect;
+                        if (!Parse(fields[2], out x) || !Parse(fields[3], out y) || !Parse(fields[4], out z)
+                            || !Parse(fields[5], out yaw) || !Parse(fields[6], out pitch)
+                            || !Parse(fields[7], out fov) || !Parse(fields[8], out aspect)
+                            || fov <= 0.0 || fov >= 180.0 || aspect < 0.25 || aspect > 5.0) continue;
+                        lock (_lock)
+                        {
+                            _view = new ViewState(x, y, z, yaw, pitch, fov, aspect);
+                            _viewReceivedAt = Environment.TickCount;
+                        }
+                    }
                 }
             }
             catch (IOException) { }
@@ -167,5 +221,12 @@ namespace CitiesCraft
         public readonly double X, Y, Z, Yaw, Pitch;
         public PlayerState(double x, double y, double z, double yaw, double pitch)
         { X = x; Y = y; Z = z; Yaw = yaw; Pitch = pitch; }
+    }
+
+    internal sealed class ViewState
+    {
+        public readonly double X, Y, Z, Yaw, Pitch, VerticalFov, Aspect;
+        public ViewState(double x, double y, double z, double yaw, double pitch, double verticalFov, double aspect)
+        { X = x; Y = y; Z = z; Yaw = yaw; Pitch = pitch; VerticalFov = verticalFov; Aspect = aspect; }
     }
 }

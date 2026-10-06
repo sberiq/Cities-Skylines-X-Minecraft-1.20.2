@@ -13,14 +13,15 @@ namespace CitiesCraft
     internal sealed class CitiesFrameReceiver : IDisposable
     {
         private const int Port = 25599;
-        private const int HeaderLength = 24;
-        private const int MaxWidth = 3840;
-        private const int MaxHeight = 2160;
-        private const int MaxPayloadLength = MaxWidth * MaxHeight * 4;
+        private const int HeaderLength = 96;
+        private const int MaxWidth = 640;
+        private const int MaxHeight = 360;
+        private const int MaxPlaneLength = MaxWidth * MaxHeight * 4;
+        private const long MaxPayloadLength = (long)MaxPlaneLength * 4L;
 
-        private static readonly byte[] Handshake = Encoding.ASCII.GetBytes("CCFRAME/1\tcities\n");
-        private static readonly byte[] AcceptedHandshake = Encoding.ASCII.GetBytes("CCFRAME/1\tOK");
-        private static readonly byte[] Magic = new byte[] { (byte)'C', (byte)'C', (byte)'F', (byte)'1' };
+        private static readonly byte[] Handshake = Encoding.ASCII.GetBytes("CCFRAME/3\tcities\n");
+        private static readonly byte[] AcceptedHandshake = Encoding.ASCII.GetBytes("CCFRAME/3\tOK");
+        private static readonly byte[] Magic = new byte[] { (byte)'C', (byte)'C', (byte)'F', (byte)'3' };
 
         private readonly object _frameLock = new object();
         private Thread _thread;
@@ -106,33 +107,72 @@ namespace CitiesCraft
             while (!_stopping)
             {
                 ReadExactly(stream, header, 0, header.Length);
-                if (!HasMagic(header)) throw new IOException("Frame header magic did not match CCF1");
+                if (!HasMagic(header)) throw new IOException("Frame header magic did not match CCF3");
 
                 int width = ReadInt32BigEndian(header, 4);
                 int height = ReadInt32BigEndian(header, 8);
                 long sequence = ReadInt64BigEndian(header, 12);
-                int payloadLength = ReadInt32BigEndian(header, 20);
+                long timestampNanos = ReadInt64BigEndian(header, 20);
+                int worldLength = ReadInt32BigEndian(header, 28);
+                int depthLength = ReadInt32BigEndian(header, 32);
+                int handLength = ReadInt32BigEndian(header, 36);
+                int guiLength = ReadInt32BigEndian(header, 40);
+                int depthEncoding = ReadInt32BigEndian(header, 44);
+                float nearPlane = ReadFloat32BigEndian(header, 48);
+                float farPlane = ReadFloat32BigEndian(header, 52);
+                double cameraX = ReadFloat64BigEndian(header, 56);
+                double cameraY = ReadFloat64BigEndian(header, 64);
+                double cameraZ = ReadFloat64BigEndian(header, 72);
+                float cameraYaw = ReadFloat32BigEndian(header, 80);
+                float cameraPitch = ReadFloat32BigEndian(header, 84);
+                float verticalFov = ReadFloat32BigEndian(header, 88);
+                float aspect = ReadFloat32BigEndian(header, 92);
 
                 long expectedLength = (long)width * height * 4L;
                 if (width <= 0 || width > MaxWidth || height <= 0 || height > MaxHeight
-                    || expectedLength > MaxPayloadLength || payloadLength != expectedLength)
+                    || expectedLength > MaxPlaneLength || worldLength != expectedLength
+                    || depthLength != expectedLength || handLength != expectedLength || guiLength != expectedLength
+                    || (long)worldLength + depthLength + handLength + guiLength > MaxPayloadLength
+                    || depthEncoding != 1 || Single.IsNaN(nearPlane) || Single.IsInfinity(nearPlane)
+                    || Single.IsNaN(farPlane) || Single.IsInfinity(farPlane)
+                    || nearPlane <= 0f || farPlane <= nearPlane
+                    || Double.IsNaN(cameraX) || Double.IsInfinity(cameraX)
+                    || Double.IsNaN(cameraY) || Double.IsInfinity(cameraY)
+                    || Double.IsNaN(cameraZ) || Double.IsInfinity(cameraZ)
+                    || Single.IsNaN(cameraYaw) || Single.IsInfinity(cameraYaw)
+                    || Single.IsNaN(cameraPitch) || Single.IsInfinity(cameraPitch)
+                    || Single.IsNaN(verticalFov) || Single.IsInfinity(verticalFov)
+                    || verticalFov <= 0f || verticalFov >= 180f
+                    || Single.IsNaN(aspect) || Single.IsInfinity(aspect) || aspect < 0.25f || aspect > 5f)
                 {
-                    throw new IOException("Frame dimensions or RGBA payload length are outside supported bounds");
+                    throw new IOException("Frame dimensions, camera metadata, or layer lengths are invalid");
                 }
                 if (sequence < 0 || (previousSequence >= 0 && sequence <= previousSequence))
                 {
                     throw new IOException("Frame sequence must increase within a connection");
                 }
 
-                byte[] pixels = new byte[payloadLength];
-                ReadExactly(stream, pixels, 0, pixels.Length);
-                FlipRowsForUnity(pixels, width, height);
+                byte[] world = new byte[worldLength];
+                byte[] depth = new byte[depthLength];
+                byte[] hand = new byte[handLength];
+                byte[] gui = new byte[guiLength];
+                ReadExactly(stream, world, 0, world.Length);
+                ReadExactly(stream, depth, 0, depth.Length);
+                ReadExactly(stream, hand, 0, hand.Length);
+                ReadExactly(stream, gui, 0, gui.Length);
+                FlipRowsForUnity(world, width, height, 4);
+                FlipRowsForUnity(depth, width, height, 4);
+                FlipRowsForUnity(hand, width, height, 4);
+                FlipRowsForUnity(gui, width, height, 4);
+                ConvertDepthEndian(depth);
 
                 previousSequence = sequence;
                 lock (_frameLock)
                 {
                     // A single pending slot keeps memory bounded; newer frames replace stale ones.
-                    _latestFrame = new Frame(width, height, sequence, pixels);
+                    _latestFrame = new Frame(width, height, sequence, timestampNanos,
+                        nearPlane, farPlane, cameraX, cameraY, cameraZ, cameraYaw, cameraPitch,
+                        verticalFov, aspect, world, depth, hand, gui);
                 }
             }
         }
@@ -176,9 +216,9 @@ namespace CitiesCraft
             return unchecked((long)value);
         }
 
-        private static void FlipRowsForUnity(byte[] pixels, int width, int height)
+        private static void FlipRowsForUnity(byte[] pixels, int width, int height, int bytesPerPixel)
         {
-            int rowLength = checked(width * 4);
+            int rowLength = checked(width * bytesPerPixel);
             byte[] row = new byte[rowLength];
             for (int top = 0, bottom = height - 1; top < bottom; top++, bottom--)
             {
@@ -187,6 +227,39 @@ namespace CitiesCraft
                 Buffer.BlockCopy(pixels, topOffset, row, 0, rowLength);
                 Buffer.BlockCopy(pixels, bottomOffset, pixels, topOffset, rowLength);
                 Buffer.BlockCopy(row, 0, pixels, bottomOffset, rowLength);
+            }
+        }
+
+        private static float ReadFloat32BigEndian(byte[] bytes, int offset)
+        {
+            byte[] value = new byte[4];
+            value[0] = bytes[offset];
+            value[1] = bytes[offset + 1];
+            value[2] = bytes[offset + 2];
+            value[3] = bytes[offset + 3];
+            if (BitConverter.IsLittleEndian)
+            {
+                byte temporary = value[0]; value[0] = value[3]; value[3] = temporary;
+                temporary = value[1]; value[1] = value[2]; value[2] = temporary;
+            }
+            return BitConverter.ToSingle(value, 0);
+        }
+
+        private static double ReadFloat64BigEndian(byte[] bytes, int offset)
+        {
+            byte[] value = new byte[8];
+            Buffer.BlockCopy(bytes, offset, value, 0, value.Length);
+            if (BitConverter.IsLittleEndian) Array.Reverse(value);
+            return BitConverter.ToDouble(value, 0);
+        }
+
+        private static void ConvertDepthEndian(byte[] depth)
+        {
+            if (!BitConverter.IsLittleEndian) return;
+            for (int offset = 0; offset < depth.Length; offset += 4)
+            {
+                byte temporary = depth[offset]; depth[offset] = depth[offset + 3]; depth[offset + 3] = temporary;
+                temporary = depth[offset + 1]; depth[offset + 1] = depth[offset + 2]; depth[offset + 2] = temporary;
             }
         }
 
@@ -207,14 +280,43 @@ namespace CitiesCraft
             public readonly int Width;
             public readonly int Height;
             public readonly long Sequence;
-            public readonly byte[] Pixels;
+            public readonly long TimestampNanos;
+            public readonly float NearPlane;
+            public readonly float FarPlane;
+            public readonly double CameraX;
+            public readonly double CameraY;
+            public readonly double CameraZ;
+            public readonly float CameraYaw;
+            public readonly float CameraPitch;
+            public readonly float VerticalFov;
+            public readonly float Aspect;
+            public readonly byte[] WorldPixels;
+            public readonly byte[] DepthPixels;
+            public readonly byte[] HandPixels;
+            public readonly byte[] GuiPixels;
 
-            public Frame(int width, int height, long sequence, byte[] pixels)
+            public Frame(int width, int height, long sequence, long timestampNanos,
+                float nearPlane, float farPlane, double cameraX, double cameraY, double cameraZ,
+                float cameraYaw, float cameraPitch, float verticalFov, float aspect,
+                byte[] worldPixels, byte[] depthPixels, byte[] handPixels, byte[] guiPixels)
             {
                 Width = width;
                 Height = height;
                 Sequence = sequence;
-                Pixels = pixels;
+                TimestampNanos = timestampNanos;
+                NearPlane = nearPlane;
+                FarPlane = farPlane;
+                CameraX = cameraX;
+                CameraY = cameraY;
+                CameraZ = cameraZ;
+                CameraYaw = cameraYaw;
+                CameraPitch = cameraPitch;
+                VerticalFov = verticalFov;
+                Aspect = aspect;
+                WorldPixels = worldPixels;
+                DepthPixels = depthPixels;
+                HandPixels = handPixels;
+                GuiPixels = guiPixels;
             }
         }
     }

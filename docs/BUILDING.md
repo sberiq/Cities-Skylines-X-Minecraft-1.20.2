@@ -42,18 +42,27 @@ msbuild cities\CitiesCraft.csproj /p:Configuration=Release
 
 If the managed directory is elsewhere, set `CITIES_SKYLINES_MANAGED` directly to the directory containing `ICities.dll`, `Assembly-CSharp.dll`, `ColossalManaged.dll` and `UnityEngine.dll`. The output is `cities\bin\Release\CitiesCraft.dll`.
 
-## Bridge protocol smoke check
+## Assemble the macOS dev kit
 
-Compile and exercise the Bridge without Minecraft, Cities or Gradle:
+After building the Java modules and Cities DLL, run:
 
 ```sh
-mkdir -p bridge/build/smoke-classes
-javac --release 17 -d bridge/build/smoke-classes bridge/src/main/java/dev/citiescraft/bridge/*.java
+./scripts/package-macos.sh
+```
+
+The script creates `dist/citiescraft-dev-kit.zip` with the Minecraft JAR, Cities DLL, Bridge distribution and matching docs. It stops if any component has not been built.
+
+## Bridge protocol smoke check
+
+Compile the Bridge with Gradle, then exercise its loopback protocol without launching either game:
+
+```sh
+./gradlew :bridge:classes
 python3 scripts/bridge-smoke.py
 ```
 
-The smoke test binds temporary loopback ports. It verifies a nonzero scale/rotation/anchor round trip, terrain and building bound conversion, state validation, and real frame replay/reconnect. It does not launch either game.
+The smoke check binds temporary loopback ports. It verifies a nonzero scale/yaw/origin mapping, camera and input routing, terrain and building proxy conversion, CCF3's four image layers with a matched camera pose, and frame reconnect. It does not launch either game.
 
 ## Current host verification
 
-The build host has Java 17 and the Steam Cities managed assemblies. Gradle 8.3 builds the Bridge and Minecraft mod; the macOS script compiles the Cities DLL. A separate process-level Bridge smoke check covers the state and frame channels. The games still need a user-side live-save check for coordinate calibration, collision fit and the render inset; do not launch the development client when building distribution artifacts.
+The build host has Java 17 and the Steam Cities managed assemblies. Gradle 8.3 builds the Bridge and Minecraft mod; the macOS script compiles the Cities DLL. The process-level Bridge smoke check covers the state and frame channels. The games still need a user-side live-save check for coordinate calibration, collisions, camera input and the full-screen depth composite; do not launch the development client when building distribution artifacts.

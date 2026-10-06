@@ -1,28 +1,15 @@
 # CitiesCraft Bridge
 
-The Bridge keeps the versioned telemetry relay on `127.0.0.1:25598` and exposes a separate binary frame relay on `127.0.0.1:25599`.
+The Bridge relays state and input on `127.0.0.1:25598`, plus Minecraft's layered CCF3 frames on `127.0.0.1:25599`. Both listeners bind to localhost only.
 
-At startup, it reads `config/citiescraft.properties` relative to its working directory (override with `-Dcitiescraft.config=/path/to/file`). Edit the Minecraft/Cities anchor pair, scale and yaw there before starting the Bridge. The state channel maps player poses and bounded terrain/building collision snapshots; see [`docs/PROTOCOL.md`](../docs/PROTOCOL.md) and [`docs/COORDINATES.md`](../docs/COORDINATES.md).
+At startup, the Bridge reads `config/citiescraft.properties` relative to its working directory. Edit the paired world anchors, scale and yaw before launching. `-Dcitiescraft.config=/path/to/file` overrides the config path.
 
-## Frame socket
+Cities sends a Minecraft camera pose and input events; Minecraft supplies the player pose and frame layers. The Bridge maps the Minecraft position, yaw, depth scale and city collision snapshot using the same calibration. See [protocol details](../docs/PROTOCOL.md), [coordinates](../docs/COORDINATES.md) and [macOS installation](../docs/INSTALLATION.md).
 
-Connect one Minecraft producer and one Cities consumer. The client starts with one ASCII line, including the final line-feed byte:
+## Layered frame socket
 
-`CCFRAME/1<TAB>minecraft<LF>` for the Minecraft producer, or `CCFRAME/1<TAB>cities<LF>` for the Cities consumer.
+The Minecraft producer sends `CCFRAME/3<TAB>minecraft<LF>` and the Cities consumer sends `CCFRAME/3<TAB>cities<LF>`. The Bridge replies `CCFRAME/3<TAB>OK<LF>`.
 
-The Bridge replies `CCFRAME/1<TAB>OK<LF>`. The Minecraft peer then writes zero or more frames. The Cities peer receives the most recently published frame immediately when one exists, followed by newer frames as they arrive. A single latest-frame slot replaces frames not yet picked up by the Cities writer; sequence numbers that do not increase within a Minecraft connection are discarded. At most one frame is in flight to Cities while newer frames replace the latest slot.
+Each CCF3 record has a 96-byte big-endian header followed by world RGBA8, positive linear depth float32, hand RGBA8 and GUI RGBA8. Its camera pose is captured with the image and transformed into Cities coordinates by Bridge. The Bridge validates dimensions and matching plane lengths, holds only the latest complete frame, and replaces old pending data instead of queuing an unbounded backlog. Full offsets and data conventions are in [docs/PROTOCOL.md](../docs/PROTOCOL.md).
 
-Each frame is a 24-byte big-endian header followed by tightly packed RGBA8 pixels:
-
-| Offset | Type | Meaning |
-| ---: | --- | --- |
-| 0 | 4 bytes | ASCII magic `CCF1` |
-| 4 | int32 | Width, 1–640 |
-| 8 | int32 | Height, 1–360 |
-| 12 | int64 | Non-negative frame sequence |
-| 20 | int32 | Payload bytes; must equal `width * height * 4` |
-| 24 | bytes | RGBA8 pixels, row order as supplied by the producer |
-
-Only Minecraft may publish frames. Cities is receive-only. Invalid handshakes, headers, dimensions, lengths, and truncated frames close that peer. The listener binds to IPv4 loopback only. The Bridge retains only one complete latest frame for a Cities peer that connects later; output frame sequence numbers stay increasing when Minecraft reconnects.
-
-Run with Java 17 using `./bin/bridge` from the unpacked distribution. The state and frame ports can be changed independently with `-Dcitiescraft.port=...` and `-Dcitiescraft.framePort=...`.
+Run with Java 17 using `./bin/bridge` from the unpacked distribution. State and frame ports can be changed with `-Dcitiescraft.port=...` and `-Dcitiescraft.framePort=...`.
