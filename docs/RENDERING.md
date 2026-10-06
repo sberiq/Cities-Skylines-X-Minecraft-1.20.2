@@ -2,7 +2,7 @@
 
 ## Chosen host: Cities
 
-Cities: Skylines renders its real live city and owns the final presented frame. Minecraft exports its real world layer and depth; Cities composites those planes using its own camera/depth. Minecraft remains a separate running game and owns Minecraft gameplay.
+Cities: Skylines is the intended final renderer. At this stage it receives Minecraft's live 640×360 RGBA frame and HUD at up to 10 fps and draws them in a picture-in-picture window. Minecraft remains a separate running game and owns Minecraft gameplay. The inset is not a 3D world composite and does not receive city depth.
 
 CS1 uses Unity 5.6 Built-in rendering. Unity documents camera depth textures and image effects for this pipeline. Existing CS1 camera mods reach the gameplay camera and can change FOV/near plane. This makes the Cities-host path plausible, but the exact final-frame callback, depth coverage, color ordering and resize behavior are still untested.
 
@@ -12,10 +12,12 @@ Minecraft owns the final view after Cities exports its final color and depth. Mi
 
 ## Stages
 
-1. Color-only composite, exported at reduced size/rate.
-2. City terrain depth and Minecraft depth in a common linear convention.
-3. Opaque building depth, with one behind/front marker test.
-4. Props and selected agents only if live depth includes them.
+1. Live color inset (implemented).
+2. Terrain and static-building collision proxies (implemented with coarse bounds).
+3. Full-screen camera alignment and color composition.
+4. City terrain depth and Minecraft depth in a common linear convention.
+5. Opaque building depth, with one behind/front marker test.
+6. Props and selected agents only if live depth includes them.
 
 A full HD RGBA8 plane is about 8.3 MB/frame; three color/depth/overlay planes at 60 fps can approach 1.5 GB/s before extra copies. Use async Minecraft readback, triple buffering, drop stale frames, and profile before raising resolution. Unity 5.6 readback must be measured separately.
 

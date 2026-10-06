@@ -22,6 +22,8 @@
     <Compile Include="CitiesCraftMod.cs" />
     <Compile Include="CitiesCraftLoadingExtension.cs" />
     <Compile Include="BridgeClient.cs" />
+    <Compile Include="CitiesWorldSnapshotBuilder.cs" />
+    <Compile Include="CitiesFrameReceiver.cs" />
     <Compile Include="CitiesCraftOverlay.cs" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

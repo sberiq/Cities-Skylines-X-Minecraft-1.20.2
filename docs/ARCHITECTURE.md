@@ -9,9 +9,9 @@ The target repository was empty. The architecture and scaffold are now checked i
 | Cities | Cities: Skylines 1 on macOS for local integration | Mature ICities / C# code-mod ecosystem, Unity Built-in render path, and community mods that locate/control the gameplay camera. The installed Mac build supplies the managed game assemblies. |
 | Minecraft | Java Edition 1.20.2 | Fixed requirement. |
 | Loader | Fabric | Client tick/render events and Mixins fit the Minecraft client hooks; the upstream Fabric example has a 1.20.2 branch. |
-| State IPC | Separate Bridge process over loopback TCP | Simple Java and legacy C# clients; used for low-rate telemetry only. |
-| Final renderer | Cities | Unity can provide a camera depth texture and post-render effect in principle. Actual Cities effect injection remains a proof-of-concept gate. |
-| Frame transfer | Windows shared-memory ring for the first render prototype | Compatible with the reference and avoids per-pixel TCP; rate/resolution must be limited. |
+| State IPC | Separate Bridge process over loopback TCP | Carries poses and bounded terrain/building snapshots; versioned and reconnecting. |
+| Final renderer | Cities | Unity can provide a camera depth texture and post-render effect in principle. Current implementation uses an IMGUI picture-in-picture view; full-screen depth composition remains a proof-of-concept gate. |
+| Frame transfer | Separate TCP socket, latest-frame only | Raw RGBA is limited to 640×360 at up to 10 fps; this is the simplest cross-process Mac prototype. |
 
 CS2 has a more modern official mod toolchain, but it uses ECS/Burst and HDRP, requiring a different custom render pass. It offers no advantage for the first Cities-host composite. Keep CS1 unless the live prototype proves its camera/depth path unworkable.
 
@@ -42,8 +42,8 @@ CS2 has a more modern official mod toolchain, but it uses ECS/Burst and HDRP, re
 | GTA camera natives | Gameplay `CameraController` and its attached Unity `Camera`; `Camera.main` is not reliable in CS1 | Camera lookup/control is shown by public CS1 mods; verify on target build. |
 | GTA Z-up conversion | Central `WorldTransform` in [COORDINATES.md](COORDINATES.md) | Scale and orientation need measured calibration. |
 | ReShade depth/final image | Unity camera depth texture and an image effect in the Cities process | Most important unproven hook. |
-| GTA ground sampling | Cities terrain height queries / raycasts, sampled around the player | Exact APIs and budget depend on installed game version. |
-| GTA people/vehicle proxies | City IDs, transforms and coarse collision bounds; Minecraft-side proxies only when gameplay needs them | Data access and stable IDs require a Windows spike. |
+| GTA ground sampling | Installed CS1 `TerrainManager.SampleFinalHeightSmooth` plus nearby `NetSegment.GetClosestPosition` road/deck queries | Terrain/deck heights compile against the Steam Mac assemblies; stair-stepped coverage still needs live-save validation. |
+| GTA people/vehicle proxies | Building bounds now; future city IDs and dynamic vehicle/citizen bounds | Static building geometry compiles against installed assemblies; dynamic proxies remain later work. |
 | GTA socket/WebSocket | Loopback Bridge with one Minecraft and one Cities peer | State path first; frames use a separate channel. |
 | GTA explosions, storm, vehicle forces | Later Cities simulation adapters for explicitly supported events | No direct one-to-one behavior for many effects. |
 
@@ -64,7 +64,7 @@ Stages: color-only composition; terrain depth; opaque building depth; selected p
 - Cities sends camera XYZ and Minecraft displays it in its HUD.
 - Both sides reconnect after Bridge restart and reject unsupported protocol versions.
 
-The Java Bridge process and its loopback protocol smoke test are implemented. The Minecraft and Cities clients are scaffolded, but this acceptance slice has not yet been verified in either game. The automated smoke test proves protocol routing and validation only; it does not prove camera alignment, rendering, depth, collisions, or gameplay parity.
+The Java Bridge, Minecraft client and Cities client now implement the first live color/coordinate/collision path. A process smoke test covers coordinate round trips, collision-box conversion and frame relay. The in-game inset, anchor calibration, terrain sampling and collision fit remain to be checked in the user's actual save; there is no claim of full 3D composition or gameplay parity.
 
 ## Platform and license status
 

@@ -11,3 +11,19 @@ java {
 application {
     mainClass = 'dev.citiescraft.bridge.BridgeServer'
 }
+
+distributions {
+    main {
+        contents {
+            from('README.md') {
+                into 'docs'
+            }
+            from("$rootDir/docs") {
+                into 'docs'
+            }
+            from("$rootDir/config/citiescraft.properties") {
+                into 'config'
+            }
+        }
+    }
+}

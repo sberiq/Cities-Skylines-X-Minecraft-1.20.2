@@ -6,10 +6,10 @@ project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
 
 if [ -n "${CITIES_SKYLINES_MANAGED:-}" ]; then
     managed_dir=$CITIES_SKYLINES_MANAGED
-elif [ -d "/Applications/Cities.app/Contents/Resources/Data/Managed" ]; then
-    managed_dir="/Applications/Cities.app/Contents/Resources/Data/Managed"
-else
+elif [ -d "$HOME/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed" ]; then
     managed_dir="$HOME/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed"
+else
+    managed_dir="/Applications/Cities.app/Contents/Resources/Data/Managed"
 fi
 
 if [ ! -f "$managed_dir/ICities.dll" ]; then
@@ -39,5 +39,5 @@ for reference in mscorlib.dll System.dll System.Core.dll ICities.dll Assembly-CS
         set -- "$@" "-reference:$managed_dir/$reference"
     fi
 done
-"$dotnet_command" "$compiler" "$@" "$project_root/cities/CitiesCraftMod.cs" "$project_root/cities/CitiesCraftLoadingExtension.cs" "$project_root/cities/BridgeClient.cs" "$project_root/cities/CitiesCraftOverlay.cs"
+"$dotnet_command" "$compiler" "$@" "$project_root/cities/CitiesCraftMod.cs" "$project_root/cities/CitiesCraftLoadingExtension.cs" "$project_root/cities/BridgeClient.cs" "$project_root/cities/CitiesWorldSnapshotBuilder.cs" "$project_root/cities/CitiesFrameReceiver.cs" "$project_root/cities/CitiesCraftOverlay.cs"
 echo "Built: $output_dir/CitiesCraft.dll"

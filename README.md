@@ -1,19 +1,35 @@
 # Cities × Minecraft 1.20.2
 
-Passthrough prototype for a live Cities: Skylines city and Minecraft Java 1.20.2 running side by side.
+An incremental passthrough prototype for Cities: Skylines 1 and Minecraft Java 1.20.2 running side by side.
 
-## Current state
+## Current build
 
-- Research, architecture and phase-one scaffolds are in place.
-- The loopback Bridge compiles on Java 17; its process smoke check passed both directions, finite-number validation and duplicate-role rejection.
-- The Fabric Minecraft 1.20.2 mod and Bridge build successfully. The mod accepts Fabric Loader 0.14.22 or newer; its development client was verified with 0.14.22. The Cities: Skylines 1 DLL also compiles on macOS against the installed game's managed assemblies; loading it in a live save is still to verify.
-- The end-to-end Phase 2 acceptance test remains open until real Minecraft 1.20.2 and Cities clients exchange continuously in game.
-- No rendering, terrain, collision, coordinate calibration or depth integration is claimed yet.
+- Minecraft captures its live 640×360 client frame, including the HUD, at up to 10 frames per second.
+- The Bridge relays the latest frame over a separate loopback TCP channel.
+- The Cities: Skylines mod displays the frame in a small picture-in-picture window, alongside the player and connection status.
+- A shared configurable transform maps Minecraft XYZ/yaw into Cities coordinates and maps Cities camera/collision data back to Minecraft.
+- Cities samples terrain and road/deck heights on an 8-meter grid and exports up to 128 nearby building bounds.
+- A Minecraft 1.20.2 Mixin feeds those temporary collision shapes into vanilla movement physics; it does not edit Minecraft blocks or saves.
+- All three components build on macOS against the Steam Cities assemblies. Protocol smoke checks cover calibrated coordinate round trips, collision geometry transforms, and frame transfer/reconnect.
 
-## Run the Bridge
+The Minecraft frame is still shown as a 2D inset. Coordinates, sampled ground/road height and coarse static building collision are implemented, but need live testing and calibration in the user's save. Terrain is stair-stepped at 8-meter intervals; tunnel floors, moving vehicles/citizens, full 3D city rendering and depth occlusion are not implemented.
 
-Java 17 is required. Start the local relay with `./gradlew :bridge:run`. It binds only to `127.0.0.1:25598`.
+## Install the prototype
 
-Build all Gradle modules with `./gradlew build`; launch the Minecraft development client with `./gradlew :minecraft:runClient`. See [build instructions](docs/BUILDING.md) and [installation status](docs/INSTALLATION.md).
+The complete locally built package is `dist/citiescraft-dev-kit.zip`. Extract it, then extract `bridge/bridge.zip` and edit `config/citiescraft.properties` inside the extracted Bridge folder using the [step-by-step macOS installation instructions](docs/INSTALLATION.md). Install the Minecraft JAR and Cities DLL from that same package.
 
-See [the architecture notes](docs/ARCHITECTURE.md), [rendering plan](docs/RENDERING.md), [Minecraft toolchain](docs/MINECRAFT_1_20_2.md), and [coordinate model](docs/COORDINATES.md).
+## Build
+
+Java 17 and Gradle 8.3 (through the checked-in wrapper) build the Bridge and Minecraft mod:
+
+```sh
+./gradlew build
+```
+
+On macOS, build the Cities mod against the game's installed managed assemblies:
+
+```sh
+./scripts/build-cities-macos.sh
+```
+
+See [build details](docs/BUILDING.md), [protocol](docs/PROTOCOL.md), [architecture notes](docs/ARCHITECTURE.md), [rendering plan](docs/RENDERING.md), [coordinate model](docs/COORDINATES.md), and [Minecraft 1.20.2 toolchain](docs/MINECRAFT_1_20_2.md).

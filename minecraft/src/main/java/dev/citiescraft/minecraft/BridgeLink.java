@@ -50,6 +50,7 @@ final class BridgeLink {
                 writer.flush();
                 String welcome = reader.readLine();
                 if (welcome == null || !welcome.startsWith("WELCOME\t1\t")) throw new IOException("Bridge rejected Minecraft client");
+                CityCollisionWorld.clear();
                 activeSocket = socket;
                 connected = true;
                 Thread receiver = new Thread(() -> readCameraLoop(socket, reader), "citiescraft-bridge-reader");
@@ -96,6 +97,10 @@ final class BridgeLink {
 
     private void parseCamera(String line) {
         String[] fields = line.split("\\t", -1);
+        if (fields.length >= 2 && "CITYWORLD".equals(fields[0])) {
+            CityCollisionWorld.accept(fields);
+            return;
+        }
         if (fields.length != 8 || !"CAMERA".equals(fields[0])) return;
         try {
             camera = new CameraState(Double.parseDouble(fields[2]), Double.parseDouble(fields[3]),

@@ -1,21 +1,24 @@
-# Collision and nearby city data
+# Terrain and collision bridge
 
-## Current status
+## Implemented path
 
-No city geometry, road surface, vehicle, citizen or collision proxy is streamed yet. The Cities client currently sends camera telemetry only, and Minecraft currently sends player telemetry only.
+Cities reads a local world snapshot around the transformed Minecraft player every 0.5 seconds. The query runs through the CS1 simulation queue and covers the configured 16–96 meter radius.
 
-## Planned first collision slice
+- Terrain height uses the installed `TerrainManager.SampleFinalHeightSmooth` API.
+- Nearby road segment candidates come from `NetManager.GetClosestSegments`; the nearest segment's `GetClosestPosition` supplies road/deck height within its half-width. A road more than one unit below terrain is treated as underground and the terrain roof remains the walkable surface.
+- Up to 128 nearby buildings become coarse bounds using their Cities position, rotation, prefab size and collision height. IDs include both building index and build index so a recycled index is distinguishable.
+- Bridge maps height cells and all eight building-box corners to Minecraft coordinates. It sends one versioned snapshot to Minecraft.
+- A Minecraft 1.20.2 Mixin adds these temporary `VoxelShape` boxes to vanilla's movement collision query. Vanilla still handles player input, jumping, movement, Minecraft blocks and step-up behavior. No Minecraft blocks or save data are changed.
+- Minecraft bins immutable collision shapes by chunk and drops the snapshot when its world closes. The next complete city snapshot replaces it atomically.
 
-Start with a bounded query around the Minecraft player. Cities remains authoritative for city objects. Send terrain height samples and coarse building bounds with stable object IDs; Minecraft creates invisible, owned collision proxies only near the player. Do not voxelize the city.
+Terrain samples are 8 meters apart. Each sample becomes an invisible vertical collision column, so slopes and road edges are stair-stepped. Rotated bounds become axis-aligned boxes and can be wider than a building's true footprint. Buildings are static; cars, citizens, props, trees and destruction are not collision proxies yet. Tunnel floors are not exported. Road samples provide support height, not road-wall geometry.
 
-Messages should be versioned add/update/remove records and include a sequence, stable source ID, transform, bounds, and expiry or unload semantics. The Bridge should cull by configured radius and avoid resending unchanged objects. Minecraft must delete only proxies owned by this mod when a city snapshot changes or the world unloads.
+## Test in a live save
 
-Roads, bridges and tunnels need surface samples or simplified collision geometry beyond a terrain-height query. Cars and citizens can begin as visual telemetry; dynamic collision is a later phase. Stable Cities IDs, geometry access and query budget still need validation against the installed CS1 assemblies and a live save.
+1. Calibrate the anchors in [COORDINATES.md](COORDINATES.md); without that, the player and streamed collision region can land at the wrong place.
+2. Start Bridge, Cities and Minecraft. In Minecraft, the HUD should show a nonzero `City collision` count once Cities is loaded.
+3. Walk across flat terrain and a road, then try a raised bridge if the save has one. Check for falling, floating and stair-step behavior.
+4. Walk into a nearby building. Minecraft should stop at its approximate invisible bounds.
+5. Leave the Minecraft world and verify the HUD count resets; reopen it and confirm a new snapshot arrives.
 
-## Acceptance checks
-
-1. Walk over a flat road without falling through or visibly floating.
-2. Walk into and around one test building without passing through its proxy.
-3. Unload the save and confirm owned proxies are removed.
-4. Move beyond the configured radius and confirm stale proxies are removed.
-5. Profile query and update cost with a repeatable test city.
+The local protocol and build checks do not replace these live game checks. API queries compile against the installed Steam game assemblies, but surface coverage and building bounds still require validation in the actual save.

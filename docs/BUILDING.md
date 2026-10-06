@@ -29,7 +29,7 @@ Cities: Skylines 1 and its `Managed` assemblies are present on the current Mac. 
 ./scripts/build-cities-macos.sh
 ```
 
-The script checks `/Applications/Cities.app/Contents/Resources/Data/Managed`, then the standard Steam app location. Set `CITIES_SKYLINES_MANAGED` to override the path. It invokes the SDK's Roslyn compiler against the game's Mono framework references and outputs `cities/bin/Release/CitiesCraft.dll`.
+The script prefers the standard Steam app location, then checks `/Applications/Cities.app/Contents/Resources/Data/Managed`. Set `CITIES_SKYLINES_MANAGED` to override the path. It invokes the SDK's Roslyn compiler against the game's Mono framework references and outputs `cities/bin/Release/CitiesCraft.dll`.
 
 ## Cities mod on Windows
 
@@ -42,18 +42,18 @@ msbuild cities\CitiesCraft.csproj /p:Configuration=Release
 
 If the managed directory is elsewhere, set `CITIES_SKYLINES_MANAGED` directly to the directory containing `ICities.dll`, `Assembly-CSharp.dll`, `ColossalManaged.dll` and `UnityEngine.dll`. The output is `cities\bin\Release\CitiesCraft.dll`.
 
-## Protocol smoke check
+## Bridge protocol smoke check
 
 Compile and exercise the Bridge without Minecraft, Cities or Gradle:
 
 ```sh
 mkdir -p bridge/build/smoke-classes
-javac --release 17 -d bridge/build/smoke-classes bridge/src/main/java/dev/citiescraft/bridge/BridgeServer.java
+javac --release 17 -d bridge/build/smoke-classes bridge/src/main/java/dev/citiescraft/bridge/*.java
 python3 scripts/bridge-smoke.py
 ```
 
-The smoke test binds a temporary loopback port. It verifies PLAYER and CAMERA routing, rejects non-finite values and prevents duplicate peers for a role.
+The smoke test binds temporary loopback ports. It verifies a nonzero scale/rotation/anchor round trip, terrain and building bound conversion, state validation, and real frame replay/reconnect. It does not launch either game.
 
 ## Current host verification
 
-Java 17 Bridge build, Fabric mod build, Minecraft development-client launch, macOS Cities DLL compilation and the Bridge protocol smoke check passed. The Minecraft client log confirmed Minecraft 1.20.2, Fabric Loader 0.14.22 and `citiescraft 0.1.0` loaded. The Cities DLL compiled against the assemblies at `/Applications/Cities.app/Contents/Resources/Data/Managed`; it has not yet been loaded in a live save.
+The build host has Java 17 and the Steam Cities managed assemblies. Gradle 8.3 builds the Bridge and Minecraft mod; the macOS script compiles the Cities DLL. A separate process-level Bridge smoke check covers the state and frame channels. The games still need a user-side live-save check for coordinate calibration, collision fit and the render inset; do not launch the development client when building distribution artifacts.

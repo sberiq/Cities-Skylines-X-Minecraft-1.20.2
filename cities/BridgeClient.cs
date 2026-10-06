@@ -16,9 +16,22 @@ namespace CitiesCraft
         private volatile TcpClient _activeClient;
         private CameraState _camera;
         private PlayerState _player;
+        private string _latestSnapshot;
+        private long _snapshotGeneration;
+        private volatile float _collisionRadius = 96f;
 
         public bool Connected { get { return _connected; } }
+        public float CollisionRadius { get { return _collisionRadius; } }
         public PlayerState LatestPlayer { get { lock (_lock) return _player; } }
+
+        public void PublishCitySnapshot(string snapshot)
+        {
+            lock (_lock)
+            {
+                _latestSnapshot = snapshot;
+                _snapshotGeneration++;
+            }
+        }
 
         public void Start()
         {
@@ -57,15 +70,28 @@ namespace CitiesCraft
                     Thread readerThread = new Thread(delegate() { ReadLoop(client, reader); });
                     readerThread.IsBackground = true;
                     readerThread.Start();
+                    long sentSnapshotGeneration = -1;
                     while (!_stopping && _connected)
                     {
                         CameraState camera;
-                        lock (_lock) camera = _camera;
+                        string snapshot;
+                        long snapshotGeneration;
+                        lock (_lock)
+                        {
+                            camera = _camera;
+                            snapshot = _latestSnapshot;
+                            snapshotGeneration = _snapshotGeneration;
+                        }
                         if (camera != null)
                         {
                             writer.WriteLine(String.Format(CultureInfo.InvariantCulture,
                                 "CAMERA\t{0}\t{1:R}\t{2:R}\t{3:R}\t{4:R}\t{5:R}\t{6:R}",
                                 sequence++, camera.X, camera.Y, camera.Z, camera.Yaw, camera.Pitch, camera.VerticalFov));
+                        }
+                        if (snapshot != null && snapshotGeneration != sentSnapshotGeneration)
+                        {
+                            writer.WriteLine(snapshot);
+                            sentSnapshotGeneration = snapshotGeneration;
                         }
                         Thread.Sleep(100);
                     }
@@ -92,6 +118,13 @@ namespace CitiesCraft
                 while (!_stopping && (line = reader.ReadLine()) != null)
                 {
                     string[] fields = line.Split('\t');
+                    if (fields.Length == 2 && fields[0] == "SETTINGS")
+                    {
+                        double radius;
+                        if (Parse(fields[1], out radius) && radius >= 16.0 && radius <= 96.0)
+                            _collisionRadius = (float)radius;
+                        continue;
+                    }
                     if (fields.Length != 7 || fields[0] != "PLAYER") continue;
                     double x, y, z, yaw, pitch;
                     if (!Parse(fields[2], out x) || !Parse(fields[3], out y) || !Parse(fields[4], out z)
