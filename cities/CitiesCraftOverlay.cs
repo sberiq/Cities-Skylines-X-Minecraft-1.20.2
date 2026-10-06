@@ -37,9 +37,21 @@ namespace CitiesCraft
         private Vector3 _calibrationAnchor;
         private float _calibrationGroundHeight;
         private float _lastAnchorSample;
+        private bool _compositorBackendSupported;
+        private string _graphicsBackend = "unknown";
 
         public void StartLink()
         {
+            _graphicsBackend = SystemInfo.graphicsDeviceVersion ?? "unknown";
+            _compositorBackendSupported = _graphicsBackend.IndexOf("OpenGL", StringComparison.OrdinalIgnoreCase) >= 0
+                && _graphicsBackend.IndexOf("Metal", StringComparison.OrdinalIgnoreCase) < 0;
+            if (!_compositorBackendSupported)
+            {
+                _passthroughEnabled = false;
+                Debug.LogWarning("CitiesCraft passthrough renderer needs OpenGL; detected " + _graphicsBackend
+                    + ". The image effect is disabled to prevent a Cities render crash.");
+            }
+
             _bridge = new BridgeClient();
             _bridge.Start();
 
@@ -55,14 +67,14 @@ namespace CitiesCraft
             bool frameFresh = _cameraFrame != null && Time.realtimeSinceStartup - _lastFrameAt < 1.0f;
             bool stateReady = _bridge != null && _bridge.Connected;
 
-            if (Input.GetKeyDown(KeyCode.F8))
+            if (_compositorBackendSupported && Input.GetKeyDown(KeyCode.F8))
             {
                 _passthroughEnabled = !_passthroughEnabled;
                 if (!_passthroughEnabled && _inputActive) ReleaseRemoteInputs();
                 if (!_passthroughEnabled) _inputActive = false;
             }
 
-            if (_passthroughEnabled && frameFresh && camera != null)
+            if (_compositorBackendSupported && _passthroughEnabled && frameFresh && camera != null)
             {
                 CitiesFirstPersonCamera.SetPose(camera,
                     new Vector3((float)_cameraFrame.CameraX, (float)_cameraFrame.CameraY, (float)_cameraFrame.CameraZ),
@@ -90,7 +102,7 @@ namespace CitiesCraft
 
             if (_compositor != null)
             {
-                _compositor.PassthroughActive = _passthroughEnabled && frameFresh;
+                _compositor.PassthroughActive = _compositorBackendSupported && _passthroughEnabled && frameFresh;
                 _compositor.MinecraftDepthScale = _bridge == null ? 1f : _bridge.DepthScale;
             }
 
@@ -184,15 +196,18 @@ namespace CitiesCraft
                 current.Use();
             }
 
-            bool integratedView = _passthroughEnabled && _bridge != null && _bridge.Connected
+            bool integratedView = _compositorBackendSupported && _compositor != null && _compositor.IsAvailable
+                && _passthroughEnabled && _bridge != null && _bridge.Connected
                 && _cameraFrame != null && Time.realtimeSinceStartup - _lastFrameAt < 1.0f;
             if (integratedView) return;
 
             string bridgeStatus = _bridge != null && _bridge.Connected ? "connected" : "connecting";
             string viewStatus = _bridge != null && _bridge.HasFreshView ? "Minecraft view live" : "waiting for Minecraft view";
-            string mode = _passthroughEnabled ? "F8: passthrough on" : "F8: passthrough off";
+            string mode = !_compositorBackendSupported
+                ? "passthrough unavailable: " + _graphicsBackend + " (Steam launch option: -force-glcore)"
+                : (_passthroughEnabled ? "F8: passthrough on" : "F8: passthrough off");
             string frameStatus = _frameSequence < 0 ? "waiting for Minecraft frame" : "frame " + _frameSequence;
-            GUI.Label(new Rect(12, 12, 560, 24), "CitiesCraft  |  Bridge " + bridgeStatus + "  |  " + viewStatus + "  |  " + frameStatus + "  |  " + mode);
+            GUI.Label(new Rect(12, 12, 900, 24), "CitiesCraft  |  Bridge " + bridgeStatus + "  |  " + viewStatus + "  |  " + frameStatus + "  |  " + mode);
             GUI.Label(new Rect(12, 34, 520, 22), string.Format(CultureInfo.InvariantCulture,
                 "Cities anchor: X {0:F2}  ground Y {1:F2}  Z {2:F2}",
                 _calibrationAnchor.x, _calibrationGroundHeight, _calibrationAnchor.z));
@@ -266,7 +281,8 @@ namespace CitiesCraft
                 _lastCameraSearch = Time.realtimeSinceStartup;
             }
 
-            if (_gameCamera != null && (_compositor == null || _compositor.gameObject != _gameCamera.gameObject))
+            if (_gameCamera != null && _compositorBackendSupported
+                && (_compositor == null || _compositor.gameObject != _gameCamera.gameObject))
             {
                 _compositor = _gameCamera.GetComponent<CitiesNativeCompositor>();
                 if (_compositor == null) _compositor = _gameCamera.gameObject.AddComponent<CitiesNativeCompositor>();
