@@ -4,7 +4,7 @@ This is an early telemetry prototype, not the finished passthrough. The Minecraf
 
 ## Install the Minecraft mod
 
-1. Use Minecraft Java Edition 1.20.2 with Fabric Loader 0.14.22.
+1. Use Minecraft Java Edition 1.20.2 with Fabric Loader 0.14.22 or newer (including 0.18.4).
 2. Install Fabric API 0.91.6+1.20.2 in the same profile.
 3. Copy `citiescraft-minecraft-0.1.0.jar` into that profile's `mods` folder. The dev kit contains this JAR at `minecraft/citiescraft-minecraft-0.1.0.jar`.
 
@@ -23,7 +23,7 @@ On Windows, build `cities/CitiesCraft.csproj` with MSBuild and set `CITIES_SKYLI
 ## Start both clients
 
 1. Extract `bridge/bridge.zip` from the dev kit.
-2. Run `bridge/bin/bridge` on macOS or `bridge\bin\bridge.bat` on Windows. Java 17 must be on `PATH`.
+2. Run `bridge/bin/bridge` on macOS or `bridge\\bin\\bridge.bat` on Windows. Java 17 must be on `PATH`.
 3. Load your existing CS1 save and open a world in Minecraft 1.20.2 with the Fabric mod.
 4. Look for Minecraft player XYZ in the Cities debug overlay and the Cities camera XYZ in the Minecraft HUD.
 
