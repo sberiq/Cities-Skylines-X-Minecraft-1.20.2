@@ -6,7 +6,7 @@ The target repository was empty. The architecture and scaffold are now checked i
 
 | Area | Decision | Basis |
 | --- | --- | --- |
-| Cities | Cities: Skylines 1 on Windows | Mature ICities / C# code-mod ecosystem, Unity Built-in render path, and community mods that locate/control the gameplay camera. |
+| Cities | Cities: Skylines 1 on macOS for local integration | Mature ICities / C# code-mod ecosystem, Unity Built-in render path, and community mods that locate/control the gameplay camera. The installed Mac build supplies the managed game assemblies. |
 | Minecraft | Java Edition 1.20.2 | Fixed requirement. |
 | Loader | Fabric | Client tick/render events and Mixins fit the Minecraft client hooks; the upstream Fabric example has a 1.20.2 branch. |
 | State IPC | Separate Bridge process over loopback TCP | Simple Java and legacy C# clients; used for low-rate telemetry only. |
@@ -68,7 +68,7 @@ The Java Bridge process and its loopback protocol smoke test are implemented. Th
 
 ## Platform and license status
 
-The current development host is macOS. It has Java 17.0.11, no .NET SDK, and its installed Gradle fails before project configuration with `Failed to load native library 'libnative-platform.dylib'`. Cities: Skylines 1 mod build and live-game acceptance require a Windows test environment.
+The current development host is macOS. It has Java 17.0.11 and an installed Cities: Skylines 1 app with `ICities.dll`, `Assembly-CSharp.dll`, `ColossalManaged.dll` and Unity assemblies under `/Applications/Cities.app/Contents/Resources/Data/Managed`. The installed .NET 6 runtime has no SDK; a portable SDK plus Roslyn compile script is being used to build against the game's Mono references. The system Gradle launcher fails its native initialization, while the checked-in Gradle 8.3 wrapper built the Bridge and Minecraft mod.
 
 The inspected passthrough source is MIT-licensed and credits Rehan / universal-modder contributors. This scaffold records its architecture without copying its application code. Any future adapted source must retain its original notices and be listed in `THIRD_PARTY_NOTICES.md`.
 
