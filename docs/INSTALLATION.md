@@ -21,7 +21,7 @@ Install all three files from the same package. Remove older copies of CitiesCraf
    ```
 
 4. Create a `CitiesCraft` folder there and copy `CitiesCraft.dll` into it.
-5. Start the **Steam** copy of Cities: Skylines 1, enable **CitiesCraft Passthrough** in **Content Manager → Mods**, and load the city save you want to use.
+5. In Steam Library, open **Cities: Skylines → Properties → General → Launch Options** and enter `-force-glcore`. This makes Cities use OpenGL, which the compositor needs. Then start the **Steam** copy, enable **CitiesCraft Passthrough** in **Content Manager → Mods**, and load the city save you want to use.
 
 ## 2. Choose the Minecraft world and start point
 
@@ -99,4 +99,4 @@ Cities renders its live 3D scene. Minecraft's world image is composited into the
 
 City surfaces are not Minecraft blocks. You cannot mine a road or building as a Minecraft block, and city damage/building changes are not implemented. Right-click block placement against a city proxy is wired through Minecraft's interaction path but still needs an in-game check. Minecraft blocks are placed and saved in the Minecraft world; a void preset keeps hidden Minecraft terrain from competing with Cities. Cars, citizens, trees, props and tunnel floors do not yet have full collision geometry. Depth occlusion, texture orientation, camera alignment, F8 handling and gameplay input have not been tested by launching both games on this build host.
 
-If the effect falls back to a Cities-only image, the Bridge or native OpenGL compositor reported a problem; see [troubleshooting](TROUBLESHOOTING.md). Keep the same game builds and read [coordinate details](COORDINATES.md) before tuning scale or yaw.
+If the overlay says `passthrough unavailable: Metal`, Steam's launch option did not switch this run to OpenGL. Close Cities, check that `-force-glcore` is still in Launch Options, and start it again. The image effect stays disabled on Metal to prevent the reported crash. On OpenGL, if the effect falls back to a Cities-only image, check the Bridge and Cities logs as described in [troubleshooting](TROUBLESHOOTING.md). Keep the same game builds and read [coordinate details](COORDINATES.md) before tuning scale or yaw.
