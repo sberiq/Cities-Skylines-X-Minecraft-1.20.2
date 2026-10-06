@@ -4,8 +4,9 @@
 
 - Confirm both mods and Bridge came from the same dev kit.
 - In Minecraft, enter a world and look for `CitiesCraft: connected`. In Bridge's Terminal window, check that both game roles connected.
-- Press **F8** in Cities to enable passthrough. The game view and frame must be fresh. If it still shows Cities only, check the Bridge frame listener on `127.0.0.1:25599` and the Cities log for `native compositor unavailable`.
-- The compositor requires the Cities gameplay camera's image-effect callback and macOS OpenGL 3.2 shader support. On initialization failure it keeps the Cities frame visible and writes the reason to the game log.
+- Read the CitiesCraft status line. If it says `passthrough unavailable: Metal`, close Cities and add `-force-glcore` under Steam Library → Cities: Skylines → Properties → General → Launch Options, then restart the game. The effect stays disabled on Metal to avoid the crash in `glCreateShader` from the camera callback.
+- On a supported OpenGL renderer, press **F8** in Cities to enable passthrough. The game view and frame must be fresh. If it still shows Cities only, check the Bridge frame listener on `127.0.0.1:25599` and the Cities log for `native compositor unavailable`.
+- The current compositor requires the Cities gameplay camera's image-effect callback and OpenGL 3.2 shader support. The Unity Player.log should report OpenGL for `Gfx Version`; if it still reports Metal, the launch option did not take effect. On initialization failure the mod keeps the Cities frame visible and writes the reason to the game log.
 - Use 16:9 windows for both games while testing; the Minecraft capture has fixed 640×360 output.
 
 ## Cities view appears but the camera does not follow Minecraft
