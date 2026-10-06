@@ -14,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Owns all blocking socket work; game and render callbacks only exchange snapshots. */
 final class BridgeLink {
     private final AtomicReference<PlayerState> player = new AtomicReference<>();
+    private final AtomicReference<ViewState> view = new AtomicReference<>();
     private volatile CameraState camera;
     private volatile boolean connected;
     private volatile boolean stopped;
@@ -27,6 +28,10 @@ final class BridgeLink {
 
     void publishPlayer(double x, double y, double z, float yaw, float pitch) {
         player.set(new PlayerState(x, y, z, yaw, pitch));
+    }
+
+    void publishView(double x, double y, double z, float yaw, float pitch, float fov, float aspect) {
+        view.set(new ViewState(x, y, z, yaw, pitch, fov, aspect));
     }
 
     CameraState cameraState() { return camera; }
@@ -50,6 +55,7 @@ final class BridgeLink {
                 writer.flush();
                 String welcome = reader.readLine();
                 if (welcome == null || !welcome.startsWith("WELCOME\t1\t")) throw new IOException("Bridge rejected Minecraft client");
+                RemoteInputState.beginSession();
                 CityCollisionWorld.clear();
                 activeSocket = socket;
                 connected = true;
@@ -57,13 +63,18 @@ final class BridgeLink {
                 receiver.setDaemon(true);
                 receiver.start();
                 long lastSend = 0;
+                long viewSequence = 0;
                 while (!stopped && connected && !socket.isClosed()) {
                     PlayerState state = player.get();
+                    ViewState currentView = view.get();
                     long now = System.nanoTime();
-                    if (state != null && now - lastSend >= 100_000_000L) {
+                    if (state != null && currentView != null && now - lastSend >= 50_000_000L) {
                         String line = String.format(Locale.ROOT, "PLAYER\t%d\t%.6f\t%.6f\t%.6f\t%.4f\t%.4f\n",
                                 sequence++, state.x, state.y, state.z, state.yaw, state.pitch);
                         writer.write(line);
+                        writer.write(String.format(Locale.ROOT, "VIEW\t%d\t%.6f\t%.6f\t%.6f\t%.4f\t%.4f\t%.3f\t%.6f\n",
+                                viewSequence++, currentView.x, currentView.y, currentView.z,
+                                currentView.yaw, currentView.pitch, currentView.fov, currentView.aspect));
                         writer.flush();
                         lastSend = now;
                     }
@@ -97,6 +108,10 @@ final class BridgeLink {
 
     private void parseCamera(String line) {
         String[] fields = line.split("\\t", -1);
+        if (fields.length >= 3 && "INPUT".equals(fields[0])) {
+            RemoteInputState.accept(fields);
+            return;
+        }
         if (fields.length >= 2 && "CITYWORLD".equals(fields[0])) {
             CityCollisionWorld.accept(fields);
             return;
@@ -121,6 +136,15 @@ final class BridgeLink {
         final double x, y, z, yaw, pitch, fov;
         CameraState(double x, double y, double z, double yaw, double pitch, double fov) {
             this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.pitch = pitch; this.fov = fov;
+        }
+    }
+
+    private static final class ViewState {
+        final double x, y, z;
+        final float yaw, pitch, fov, aspect;
+        ViewState(double x, double y, double z, float yaw, float pitch, float fov, float aspect) {
+            this.x = x; this.y = y; this.z = z;
+            this.yaw = yaw; this.pitch = pitch; this.fov = fov; this.aspect = aspect;
         }
     }
 }

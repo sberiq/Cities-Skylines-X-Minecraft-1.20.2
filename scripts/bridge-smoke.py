@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CLASSES = ROOT / "bridge" / "build" / "smoke-classes"
+CLASSES = ROOT / "bridge" / "build" / "classes" / "java" / "main"
 
 
 def free_port():
@@ -27,6 +27,10 @@ def recv_exact(sock, length):
     return bytes(chunks)
 
 
+def float32(value):
+    return struct.unpack(">f", struct.pack(">f", value))[0]
+
+
 def state_connect(port, role):
     client = socket.create_connection(("127.0.0.1", port), timeout=3)
     client.settimeout(3)
@@ -36,7 +40,7 @@ def state_connect(port, role):
     welcome = stream.readline().rstrip("\n")
     settings = stream.readline().rstrip("\n")
     assert welcome.startswith("WELCOME\t1\t"), welcome
-    assert settings == "SETTINGS\t96.0", settings
+    assert settings == "SETTINGS\t96.0\t2.0", settings
     return client, stream
 
 
@@ -61,7 +65,7 @@ def state_connect_bad_version(port):
 def frame_connect(port, role, timeout=2):
     client = socket.create_connection(("127.0.0.1", port), timeout=timeout)
     client.settimeout(timeout)
-    client.sendall(("CCFRAME/1\t" + role + "\n").encode("ascii"))
+    client.sendall(("CCFRAME/3\t" + role + "\n").encode("ascii"))
     response = bytearray()
     while not response.endswith(b"\n") and len(response) < 32:
         part = client.recv(1)
@@ -69,23 +73,31 @@ def frame_connect(port, role, timeout=2):
             client.close()
             raise ConnectionError("frame peer was not accepted")
         response.extend(part)
-    if response != b"CCFRAME/1\tOK\n":
+    if response != b"CCFRAME/3\tOK\n":
         client.close()
         raise ConnectionError("frame handshake rejected: " + repr(bytes(response)))
     return client
 
 
-def send_frame(sock, sequence, pixels):
-    header = b"CCF1" + struct.pack(">iiqi", 2, 2, sequence, len(pixels))
-    sock.sendall(header + pixels)
+def send_frame(sock, sequence, timestamp, world, depth, hand, gui):
+    header = struct.pack(">4siiqqiiiiiffdddffff", b"CCF3", 2, 2, sequence, timestamp,
+                         len(world), len(depth), len(hand), len(gui), 1, 0.05, 256.0,
+                         12.0, 65.0, -4.0, 0.0, -10.0, 70.0, 16.0 / 9.0)
+    sock.sendall(header + world + depth + hand + gui)
 
 
 def read_frame(sock):
-    header = recv_exact(sock, 24)
-    assert header[:4] == b"CCF1", header[:4]
-    width, height, sequence, payload_length = struct.unpack(">iiqi", header[4:])
-    pixels = recv_exact(sock, payload_length)
-    return width, height, sequence, pixels
+    header = recv_exact(sock, 96)
+    assert header[:4] == b"CCF3", header[:4]
+    unpacked = struct.unpack(">iiqqiiiiiffdddffff", header[4:])
+    width, height, sequence, timestamp = unpacked[:4]
+    world_length, depth_length, hand_length, gui_length, encoding, near, far = unpacked[4:11]
+    camera = unpacked[11:]
+    world = recv_exact(sock, world_length)
+    depth = recv_exact(sock, depth_length)
+    hand = recv_exact(sock, hand_length)
+    gui = recv_exact(sock, gui_length)
+    return width, height, sequence, timestamp, encoding, near, far, camera, world, depth, hand, gui
 
 
 def main():
@@ -145,9 +157,19 @@ def main():
             mc.flush()
             player = city.readline().rstrip("\n").split("\t")
             assert player[0:2] == ["PLAYER", "1"], player
-            assert [float(value) for value in player[2:]] == [102.0, 22.0, 196.0, -90.0, -10.0], player
+            assert [float(value) for value in player[2:]] == [102.0, 22.0, 196.0, 90.0, -10.0], player
 
-            city.write("CAMERA\t1\t102\t22\t196\t-90\t-10\t70\n")
+            mc.write("VIEW\t1\t12\t65\t-4\t0\t-10\t70\t1.777778\n")
+            mc.flush()
+            view = city.readline().rstrip("\n").split("\t")
+            assert view[:2] == ["VIEW", "1"], view
+            assert [float(value) for value in view[2:]] == [102.0, 22.0, 196.0, 90.0, -10.0, 70.0, 1.777778], view
+
+            city.write("INPUT\t1\tKEY\t87\t0\t1\t0\n")
+            city.flush()
+            assert mc.readline().rstrip("\n") == "INPUT\t1\tKEY\t87\t0\t1\t0"
+
+            city.write("CAMERA\t1\t102\t22\t196\t90\t-10\t70\n")
             city.flush()
             camera = mc.readline().rstrip("\n").split("\t")
             assert camera[0:2] == ["CAMERA", "1"], camera
@@ -178,10 +200,15 @@ def main():
             source = frame_connect(frame_port, "minecraft")
             consumer = frame_connect(frame_port, "cities")
             peers.extend([source, consumer])
-            first_pixels = bytes(range(16))
-            send_frame(source, 8, first_pixels)
+            first_world = bytes(range(16))
+            first_depth = struct.pack(">ffff", 1.0, 2.0, float("inf"), 64.0)
+            first_hand = bytes(reversed(range(16)))
+            first_gui = bytes([0, 0, 0, 0] * 4)
+            send_frame(source, 8, 1234, first_world, first_depth, first_hand, first_gui)
             first = read_frame(consumer)
-            assert first == (2, 2, 0, first_pixels), first
+            assert first[:7] == (2, 2, 0, 1234, 1, float32(0.05), 256.0), first
+            assert first[7] == (102.0, 22.0, 196.0, 90.0, -10.0, 70.0, float32(16.0 / 9.0)), first
+            assert first[8:] == (first_world, first_depth, first_hand, first_gui), first
 
             source.close()
             peers.remove(source)
@@ -195,15 +222,20 @@ def main():
                         raise RuntimeError("Minecraft frame peer did not reconnect")
                     time.sleep(0.1)
             peers.append(second_source)
-            second_pixels = bytes(reversed(range(16)))
-            send_frame(second_source, 0, second_pixels)
+            second_world = bytes(reversed(range(16)))
+            second_depth = struct.pack(">ffff", 4.0, 8.0, 16.0, 32.0)
+            second_hand = bytes([0, 0, 0, 0] * 4)
+            second_gui = bytes([255, 255, 255, 255] * 4)
+            send_frame(second_source, 0, 5678, second_world, second_depth, second_hand, second_gui)
             second = read_frame(consumer)
-            assert second == (2, 2, 1, second_pixels), second
+            assert second[:7] == (2, 2, 1, 5678, 1, float32(0.05), 256.0), second
+            assert second[7] == (102.0, 22.0, 196.0, 90.0, -10.0, 70.0, float32(16.0 / 9.0)), second
+            assert second[8:] == (second_world, second_depth, second_hand, second_gui), second
 
             bad_version, response = state_connect_bad_version(port)
             peers.append(bad_version)
             assert response.startswith("ERROR\thello\t"), response
-            print("Bridge smoke passed: calibrated pose round-trip, terrain/building mapping, state validation, frame replay and reconnect")
+            print("Bridge smoke passed: view/camera mapping, remote input, city geometry, CCF3 frame pose/depth layers and reconnect")
         finally:
             for peer in peers:
                 try:

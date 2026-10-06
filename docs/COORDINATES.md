@@ -1,8 +1,8 @@
-# Common world coordinates and calibration
+# Coordinate mapping and calibration
 
-The Bridge owns one transform shared by the Cities and Minecraft adapters. Minecraft positions are block coordinates; Cities positions are Unity world units. Both use Y-up, but each has its own origin and may have a different horizontal orientation.
+Minecraft reports player feet in block coordinates and its rendered camera in eye coordinates. Cities uses Unity world units, with Y as up. The Bridge maps both positions using one origin pair, one scale and one horizontal yaw offset.
 
-For Minecraft point `(x, y, z)`, Minecraft anchor `oM`, Cities anchor `oC`, scale `s` (Cities units per Minecraft block), and yaw offset `θ`:
+For Minecraft position `(x,y,z)`, Minecraft origin `oM`, Cities origin `oC`, scale `s` (Cities units per Minecraft block), and yaw offset `θ`:
 
 ```text
 dx = (x - oM.x) * s
@@ -12,26 +12,26 @@ dz = (z - oM.z) * s
 Cities.x = oC.x + cos(θ) * dx + sin(θ) * dz
 Cities.y = oC.y + dy
 Cities.z = oC.z - sin(θ) * dx + cos(θ) * dz
-Cities.yaw = wrap(Minecraft.yaw - θ)
+Cities.yaw = wrap(θ - Minecraft.yaw)
 ```
 
-The inverse transform maps Cities camera positions and collision geometry back into Minecraft. It transforms all eight corners of an obstacle bound and builds an axis-aligned Minecraft collision box. Position translation is never applied to directions; yaw rotates separately.
+Yaw is converted from Minecraft's convention to Unity's convention. The inverse maps Cities camera and collision positions back into Minecraft. Position translation is not applied to directions; yaw rotates separately. Minecraft camera eye coordinates drive the Cities view, while the paired origins are defined using player feet and city ground.
 
-## Pick the anchor pair
+## Detailed first calibration
 
-There is no common landmark in the two games, so a save cannot be auto-aligned. Choose the Cities spot where the Minecraft player should begin, then assign that spot the Minecraft player's current coordinates.
+1. Load the target Cities save with the CitiesCraft mod enabled. Press **F8** if passthrough hides the calibration label, then pan the Cities camera target over the road or sidewalk to use as the starting location.
+2. Read the overlay's `Cities anchor` X, **ground Y**, and Z. Ground Y is the surface height; it is different from the elevated camera position.
+3. In the Minecraft void world, stand at the position you want associated with that surface. Open **F3**, note `XYZ` (feet coordinates), and keep those numbers.
+4. Paste the two triples into `world.cities-origin-x/y/z` and `world.minecraft-origin-x/y/z` in the Bridge config. Use matching coordinate order: X→X, Y→Y, Z→Z.
+5. Leave `world.scale=1.0` and `world.yaw-offset-degrees=0.0`, save, and restart Bridge.
+6. With the player still at the saved Minecraft XYZ, focus Cities and enable passthrough with **F8**. Compare the mapped feet with the selected street point.
+7. If height is wrong, change only `world.cities-origin-y`. If horizontal size is wrong, adjust `world.scale`. If forward direction is wrong, change `world.yaw-offset-degrees`. Restart Bridge and recheck after each adjustment.
 
-1. Start Cities and load the save. The CitiesCraft overlay shows `Cities anchor`: the camera's target X/Z and sampled terrain height Y. Pan the city camera until that target is on the road or sidewalk where the Minecraft player should start.
-2. In Minecraft, stand where you want the corresponding player origin to be. Press **F3** and record the player's `XYZ` (feet position).
-3. Edit `config/citiescraft.properties` beside the extracted Bridge launcher. Put the Cities overlay coordinates in `world.cities-origin-x/y/z` and the F3 coordinates in `world.minecraft-origin-x/y/z`.
-4. Use `world.scale=1.0` and `world.yaw-offset-degrees=0.0` for a first run. One Cities world unit is approximately one meter and one Minecraft block is one meter. Adjust yaw if the streets run at a different angle to the Minecraft axes.
-5. Restart the Bridge after editing the file. Its startup log confirms which calibration file it loaded.
-
-The anchors should describe matching positions: at Minecraft origin, the player feet should map to the Cities ground point. Set the Cities Y origin to the displayed ground height, not the elevated camera height. If a player sinks or floats, adjust the vertical anchor using the overlays and try again.
+There is no shared landmark to infer between the saves. You choose which Minecraft point maps to which Cities point. The first mapping therefore establishes a shared location; it does not reconstruct geographic relationships between the two games.
 
 ## Settings
 
-`config/citiescraft.properties` is the single settings source:
+`config/citiescraft.properties` beside the extracted Bridge contains the shared settings:
 
 ```properties
 world.scale=1.0
@@ -45,8 +45,10 @@ world.cities-origin-z=0.0
 collision.radius-cities-units=96.0
 ```
 
-Collision radius is limited to 16–96 Cities units so terrain and geometry snapshots remain bounded. The Bridge sends the selected radius to Cities when it connects. Scale, origins and yaw must be finite; scale must be greater than zero.
+Scale must be finite and greater than zero. Yaw and all origins must be finite. Collision radius is limited to 16–96 Cities units; the Bridge sends it to Cities when the game connects.
 
-## Verification
+## Scope and verification
 
-The Bridge smoke check exercises a nonzero scale, a 90-degree yaw, an offset anchor, inverse pose conversion and transformed terrain/building bounds. It verifies math and protocol routing without launching either game. Actual scale, road alignment, player feet height and collision fit must be checked in the user's loaded save.
+Cities terrain is sampled on an 8-unit grid. Nearby static building bounds are approximate axis-aligned boxes. Minecraft receives these shapes as temporary collision/raycast proxies, not as generated blocks. Moving traffic, citizens, props and tunnel floors are not fully represented.
+
+The Bridge smoke check validates nonzero scale, yaw conversion, origin mapping and transformed bounds. It does not validate the world height, direction, collision fit or projection in a running game. Those depend on the chosen Cities save and must be checked in-game.

@@ -1,35 +1,23 @@
-# Cities × Minecraft 1.20.2
+# Cities × Minecraft 1.20.2 passthrough
 
-An incremental passthrough prototype for Cities: Skylines 1 and Minecraft Java 1.20.2 running side by side.
+This macOS prototype makes Cities: Skylines 1 the visible game. Minecraft supplies the first-person world, hand, HUD, inventory and input. Cities follows Minecraft's eye camera and composites Minecraft pixels only where their depth is in front of the city. The Bridge carries camera state, input and frame layers over localhost.
 
-## Current build
+## Current implementation
 
-- Minecraft captures its live 640×360 client frame, including the HUD, at up to 10 frames per second.
-- The Bridge relays the latest frame over a separate loopback TCP channel.
-- The Cities: Skylines mod displays the frame in a small picture-in-picture window, alongside the player and connection status.
-- A shared configurable transform maps Minecraft XYZ/yaw into Cities coordinates and maps Cities camera/collision data back to Minecraft.
-- Cities samples terrain and road/deck heights on an 8-meter grid and exports up to 128 nearby building bounds.
-- A Minecraft 1.20.2 Mixin feeds those temporary collision shapes into vanilla movement physics; it does not edit Minecraft blocks or saves.
-- All three components build on macOS against the Steam Cities assemblies. Protocol smoke checks cover calibrated coordinate round trips, collision geometry transforms, and frame transfer/reconnect.
+- Minecraft 1.20.2 Fabric client captures a 640×360 world image, linear depth, first-person hand and HUD/screen as synchronized layers at up to 20 fps.
+- The Java Bridge relays CCF3 layers, including the exact camera pose captured with each image, and maps coordinates between the games.
+- Cities: Skylines 1 follows the mapped Minecraft camera and runs a macOS OpenGL 3.2 compositor against the city's depth texture.
+- Keyboard, text, mouse look, clicks and scroll are forwarded from Cities to Minecraft. Press **F8** in Cities to suspend or resume passthrough and input forwarding.
+- Nearby terrain/road and static-building bounds feed Minecraft movement collision. A synthetic crosshair ray can target streamed city surfaces; ordinary Minecraft air cells are required for block placement.
 
-The Minecraft frame is still shown as a 2D inset. Coordinates, sampled ground/road height and coarse static building collision are implemented, but need live testing and calibration in the user's save. Terrain is stair-stepped at 8-meter intervals; tunnel floors, moving vehicles/citizens, full 3D city rendering and depth occlusion are not implemented.
+## Limits to know
 
-## Install the prototype
+The components compile on macOS, but the two games have not been launched together to validate the camera, compositor, mouse feel or occlusion. If the native OpenGL compositor cannot initialize, Cities keeps its normal image and logs the reason. Capture is fixed at 640×360/20 fps. Minecraft world post-effects are not included, transparent-world depth and overlapping HUD alpha can be imperfect, and Cities vehicles/props may not provide useful depth.
 
-The complete locally built package is `dist/citiescraft-dev-kit.zip`. Extract it, then extract `bridge/bridge.zip` and edit `config/citiescraft.properties` inside the extracted Bridge folder using the [step-by-step macOS installation instructions](docs/INSTALLATION.md). Install the Minecraft JAR and Cities DLL from that same package.
+Use a separate Minecraft **The Void** Superflat world while testing. Normal Minecraft terrain is still rendered from the Minecraft world, and its hidden blocks can interfere with city placement. The mod temporarily turns off view bobbing and FOV effects so the rendered camera stays matched with Cities, then restores your settings when Minecraft closes. City buildings are collision and raycast proxies, not real Minecraft blocks: they cannot be mined, and reliable placement against them still needs in-game validation. Any blocks you place are saved in the Minecraft world.
 
-## Build
+## Build and install
 
-Java 17 and Gradle 8.3 (through the checked-in wrapper) build the Bridge and Minecraft mod:
+Build instructions: [docs/BUILDING.md](docs/BUILDING.md). Install, align the two coordinate origins, and run the games: [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
-```sh
-./gradlew build
-```
-
-On macOS, build the Cities mod against the game's installed managed assemblies:
-
-```sh
-./scripts/build-cities-macos.sh
-```
-
-See [build details](docs/BUILDING.md), [protocol](docs/PROTOCOL.md), [architecture notes](docs/ARCHITECTURE.md), [rendering plan](docs/RENDERING.md), [coordinate model](docs/COORDINATES.md), and [Minecraft 1.20.2 toolchain](docs/MINECRAFT_1_20_2.md).
+The build output is `dist/citiescraft-dev-kit.zip`, assembled with `./scripts/package-macos.sh` after the three components build. Use the Minecraft JAR, Cities DLL and Bridge from the same archive.

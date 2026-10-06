@@ -5,7 +5,11 @@
   "compatibilityLevel": "JAVA_17",
   "client": [
     "GameRendererMixin",
-    "EntityCollisionMixin"
+    "EntityCollisionMixin",
+    "MinecraftClientInputMixin",
+    "MouseInputInvoker",
+    "KeyboardInputInvoker",
+    "CityCrosshairMixin"
   ],
   "injectors": {
     "defaultRequire": 1

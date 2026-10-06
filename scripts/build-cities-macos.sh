@@ -39,5 +39,5 @@ for reference in mscorlib.dll System.dll System.Core.dll ICities.dll Assembly-CS
         set -- "$@" "-reference:$managed_dir/$reference"
     fi
 done
-"$dotnet_command" "$compiler" "$@" "$project_root/cities/CitiesCraftMod.cs" "$project_root/cities/CitiesCraftLoadingExtension.cs" "$project_root/cities/BridgeClient.cs" "$project_root/cities/CitiesWorldSnapshotBuilder.cs" "$project_root/cities/CitiesFrameReceiver.cs" "$project_root/cities/CitiesCraftOverlay.cs"
+"$dotnet_command" "$compiler" "$@" "$project_root/cities/CitiesCraftMod.cs" "$project_root/cities/CitiesCraftLoadingExtension.cs" "$project_root/cities/CitiesFirstPersonCamera.cs" "$project_root/cities/CitiesNativeCompositor.cs" "$project_root/cities/BridgeClient.cs" "$project_root/cities/CitiesWorldSnapshotBuilder.cs" "$project_root/cities/CitiesFrameReceiver.cs" "$project_root/cities/CitiesCraftOverlay.cs"
 echo "Built: $output_dir/CitiesCraft.dll"

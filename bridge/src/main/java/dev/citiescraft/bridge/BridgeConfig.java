@@ -11,10 +11,12 @@ import java.util.Properties;
 final class BridgeConfig {
     final WorldTransform transform;
     final float collisionRadius;
+    final float scale;
 
-    private BridgeConfig(WorldTransform transform, float collisionRadius) {
+    private BridgeConfig(WorldTransform transform, float collisionRadius, float scale) {
         this.transform = transform;
         this.collisionRadius = collisionRadius;
+        this.scale = scale;
     }
 
     static BridgeConfig load() {
@@ -54,7 +56,7 @@ final class BridgeConfig {
         }
 
         return new BridgeConfig(new WorldTransform(scale, yawDegrees, mcX, mcY, mcZ, cityX, cityY, cityZ),
-                (float) radius);
+                (float) radius, (float) scale);
     }
 
     private static double number(Properties properties, String key, double fallback) {

@@ -1,6 +1,7 @@
 using ColossalFramework;
 using UnityEngine;
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Threading;
 using Object = UnityEngine.Object;
@@ -11,8 +12,18 @@ namespace CitiesCraft
     {
         private BridgeClient _bridge;
         private CitiesFrameReceiver _frameReceiver;
-        private Texture2D _minecraftFrame;
+        private CitiesNativeCompositor _compositor;
         private long _frameSequence = -1;
+        private float _lastFrameAt;
+        private CitiesFrameReceiver.Frame _cameraFrame;
+        private Texture2D _worldColor;
+        private Texture2D _linearDepth;
+        private Texture2D _handLayer;
+        private Texture2D _guiLayer;
+        private int _textureWidth;
+        private int _textureHeight;
+        private float _frameNear = 0.05f;
+        private float _frameFar = 256f;
         private Camera _gameCamera;
         private CameraController _cameraController;
         private float _lastCameraSearch;
@@ -20,6 +31,9 @@ namespace CitiesCraft
         private int _snapshotPending;
         private long _snapshotSequence;
         private volatile bool _stoppingSnapshots;
+        private bool _passthroughEnabled = true;
+        private bool _inputActive;
+        private Vector2 _lastCursor = new Vector2(-1f, -1f);
         private Vector3 _calibrationAnchor;
         private float _calibrationGroundHeight;
         private float _lastAnchorSample;
@@ -38,14 +52,150 @@ namespace CitiesCraft
             UpdateMinecraftFrame();
 
             Camera camera = GetGameCamera();
-            if (camera != null && _bridge != null)
+            bool frameFresh = _cameraFrame != null && Time.realtimeSinceStartup - _lastFrameAt < 1.0f;
+            bool stateReady = _bridge != null && _bridge.Connected;
+
+            if (Input.GetKeyDown(KeyCode.F8))
             {
-                Vector3 pos = camera.transform.position;
-                Vector3 angles = camera.transform.eulerAngles;
-                _bridge.PublishCamera(new CameraState(pos.x, pos.y, pos.z, angles.y, angles.x, camera.fieldOfView));
+                _passthroughEnabled = !_passthroughEnabled;
+                if (!_passthroughEnabled && _inputActive) ReleaseRemoteInputs();
+                if (!_passthroughEnabled) _inputActive = false;
             }
+
+            if (_passthroughEnabled && frameFresh && camera != null)
+            {
+                CitiesFirstPersonCamera.SetPose(camera,
+                    new Vector3((float)_cameraFrame.CameraX, (float)_cameraFrame.CameraY, (float)_cameraFrame.CameraZ),
+                    _cameraFrame.CameraYaw, _cameraFrame.CameraPitch,
+                    _cameraFrame.VerticalFov, _cameraFrame.Aspect);
+                if (stateReady)
+                {
+                    CaptureRemoteInput();
+                    _inputActive = true;
+                }
+                else
+                {
+                    if (_inputActive) ReleaseRemoteInputs();
+                    _inputActive = false;
+                    _lastCursor = new Vector2(-1f, -1f);
+                }
+            }
+            else
+            {
+                if (camera != null) CitiesFirstPersonCamera.Clear(camera);
+                if (_inputActive) ReleaseRemoteInputs();
+                _inputActive = false;
+                _lastCursor = new Vector2(-1f, -1f);
+            }
+
+            if (_compositor != null)
+            {
+                _compositor.PassthroughActive = _passthroughEnabled && frameFresh;
+                _compositor.MinecraftDepthScale = _bridge == null ? 1f : _bridge.DepthScale;
+            }
+
             UpdateCalibrationAnchor();
             RequestWorldSnapshot();
+        }
+
+        private void CaptureRemoteInput()
+        {
+            if (_bridge == null) return;
+
+            InputKey[] keys = InputKeys;
+            for (int i = 0; i < keys.Length; i++)
+            {
+                if (Input.GetKeyDown(keys[i].UnityKey))
+                    SendKey(keys[i].GlfwKey, 1);
+                if (Input.GetKeyUp(keys[i].UnityKey))
+                    SendKey(keys[i].GlfwKey, 0);
+            }
+
+            float mouseX = Input.GetAxisRaw("Mouse X");
+            float mouseY = Input.GetAxisRaw("Mouse Y");
+            if (mouseX != 0f || mouseY != 0f)
+                _bridge.PublishInput("LOOK", Number(mouseX), Number(-mouseY));
+
+            Vector3 cursor = Input.mousePosition;
+            Vector2 normalizedCursor = new Vector2(
+                Screen.width <= 0 ? 0f : Mathf.Clamp01(cursor.x / Screen.width),
+                Screen.height <= 0 ? 0f : Mathf.Clamp01(1f - cursor.y / Screen.height));
+            if (Mathf.Abs(normalizedCursor.x - _lastCursor.x) > 0.0005f
+                || Mathf.Abs(normalizedCursor.y - _lastCursor.y) > 0.0005f)
+            {
+                _bridge.PublishInput("CURSOR", Number(normalizedCursor.x), Number(normalizedCursor.y));
+                _lastCursor = normalizedCursor;
+            }
+
+            for (int button = 0; button <= 7; button++)
+            {
+                if (button > 6) break;
+                if (Input.GetMouseButtonDown(button)) SendButton(button, 1);
+                if (Input.GetMouseButtonUp(button)) SendButton(button, 0);
+            }
+
+            float scroll = Input.GetAxisRaw("Mouse ScrollWheel");
+            if (scroll != 0f) _bridge.PublishInput("SCROLL", "0", Number(scroll * 10f));
+        }
+
+        private void SendKey(int glfwKey, int action)
+        {
+            _bridge.PublishInput("KEY", glfwKey.ToString(CultureInfo.InvariantCulture), "0",
+                action.ToString(CultureInfo.InvariantCulture), InputModifiers().ToString(CultureInfo.InvariantCulture));
+        }
+
+        private void SendButton(int button, int action)
+        {
+            _bridge.PublishInput("BUTTON", button.ToString(CultureInfo.InvariantCulture),
+                action.ToString(CultureInfo.InvariantCulture), InputModifiers().ToString(CultureInfo.InvariantCulture));
+        }
+
+        private void ReleaseRemoteInputs()
+        {
+            InputKey[] keys = InputKeys;
+            for (int i = 0; i < keys.Length; i++) SendKey(keys[i].GlfwKey, 0);
+            for (int button = 0; button <= 6; button++) SendButton(button, 0);
+        }
+
+        private static int InputModifiers()
+        {
+            int modifiers = 0;
+            if (Input.GetKey(ParseKey("LeftShift")) || Input.GetKey(ParseKey("RightShift"))) modifiers |= 1;
+            if (Input.GetKey(ParseKey("LeftControl")) || Input.GetKey(ParseKey("RightControl"))) modifiers |= 2;
+            if (Input.GetKey(ParseKey("LeftAlt")) || Input.GetKey(ParseKey("RightAlt"))) modifiers |= 4;
+            return modifiers;
+        }
+
+        private static string Number(float value)
+        {
+            return value.ToString("R", CultureInfo.InvariantCulture);
+        }
+
+        private void OnGUI()
+        {
+            Event current = Event.current;
+            if (_passthroughEnabled && current != null && current.type == EventType.KeyDown)
+            {
+                if (current.character != '\0' && !Char.IsControl(current.character) && _bridge != null)
+                {
+                    _bridge.PublishInput("TEXT", ((int)current.character).ToString(CultureInfo.InvariantCulture),
+                        InputModifiers().ToString(CultureInfo.InvariantCulture));
+                }
+                current.Use();
+            }
+
+            bool integratedView = _passthroughEnabled && _bridge != null && _bridge.Connected
+                && _cameraFrame != null && Time.realtimeSinceStartup - _lastFrameAt < 1.0f;
+            if (integratedView) return;
+
+            string bridgeStatus = _bridge != null && _bridge.Connected ? "connected" : "connecting";
+            string viewStatus = _bridge != null && _bridge.HasFreshView ? "Minecraft view live" : "waiting for Minecraft view";
+            string mode = _passthroughEnabled ? "F8: passthrough on" : "F8: passthrough off";
+            string frameStatus = _frameSequence < 0 ? "waiting for Minecraft frame" : "frame " + _frameSequence;
+            GUI.Label(new Rect(12, 12, 560, 24), "CitiesCraft  |  Bridge " + bridgeStatus + "  |  " + viewStatus + "  |  " + frameStatus + "  |  " + mode);
+            GUI.Label(new Rect(12, 34, 520, 22), string.Format(CultureInfo.InvariantCulture,
+                "Cities anchor: X {0:F2}  ground Y {1:F2}  Z {2:F2}",
+                _calibrationAnchor.x, _calibrationGroundHeight, _calibrationAnchor.z));
         }
 
         private void UpdateCalibrationAnchor()
@@ -99,20 +249,31 @@ namespace CitiesCraft
 
         private Camera GetGameCamera()
         {
-            if (_gameCamera != null && Time.realtimeSinceStartup - _lastCameraSearch < 2f) return _gameCamera;
-            CameraController controller = Object.FindObjectOfType<CameraController>();
-            if (controller != null)
+            if (_gameCamera == null || Time.realtimeSinceStartup - _lastCameraSearch >= 2f)
             {
-                _cameraController = controller;
-                _gameCamera = controller.GetComponent<Camera>();
-                if (_gameCamera == null)
+                CameraController controller = Object.FindObjectOfType<CameraController>();
+                if (controller != null)
                 {
-                    Camera[] children = controller.GetComponentsInChildren<Camera>(true);
-                    if (children != null && children.Length > 0) _gameCamera = children[0];
+                    _cameraController = controller;
+                    _gameCamera = controller.GetComponent<Camera>();
+                    if (_gameCamera == null)
+                    {
+                        Camera[] children = controller.GetComponentsInChildren<Camera>(true);
+                        if (children != null && children.Length > 0) _gameCamera = children[0];
+                    }
                 }
+                if (_gameCamera == null) _gameCamera = Camera.main;
+                _lastCameraSearch = Time.realtimeSinceStartup;
             }
-            if (_gameCamera == null) _gameCamera = Camera.main;
-            _lastCameraSearch = Time.realtimeSinceStartup;
+
+            if (_gameCamera != null && (_compositor == null || _compositor.gameObject != _gameCamera.gameObject))
+            {
+                _compositor = _gameCamera.GetComponent<CitiesNativeCompositor>();
+                if (_compositor == null) _compositor = _gameCamera.gameObject.AddComponent<CitiesNativeCompositor>();
+                if (_worldColor != null)
+                    _compositor.SetMinecraftFrames(_worldColor, _linearDepth, _handLayer, _guiLayer,
+                        _frameNear, _frameFar);
+            }
             return _gameCamera;
         }
 
@@ -122,87 +283,126 @@ namespace CitiesCraft
             CitiesFrameReceiver.Frame frame = _frameReceiver.TakeLatestFrame();
             if (frame == null) return;
 
-            if (_minecraftFrame == null || _minecraftFrame.width != frame.Width || _minecraftFrame.height != frame.Height)
+            if (_worldColor == null || _textureWidth != frame.Width || _textureHeight != frame.Height)
             {
-                if (_minecraftFrame != null) Object.Destroy(_minecraftFrame);
-                _minecraftFrame = new Texture2D(frame.Width, frame.Height, TextureFormat.RGBA32, false);
-                _minecraftFrame.name = "CitiesCraft Minecraft frame";
+                DestroyMinecraftTextures();
+                _textureWidth = frame.Width;
+                _textureHeight = frame.Height;
+                _worldColor = CreateColorTexture("CitiesCraft Minecraft world", frame.Width, frame.Height);
+                _handLayer = CreateColorTexture("CitiesCraft Minecraft hand", frame.Width, frame.Height);
+                _guiLayer = CreateColorTexture("CitiesCraft Minecraft GUI", frame.Width, frame.Height);
+                _linearDepth = new Texture2D(frame.Width, frame.Height, TextureFormat.RFloat, false, true);
+                _linearDepth.name = "CitiesCraft Minecraft linear depth";
+                _linearDepth.filterMode = FilterMode.Point;
+                _linearDepth.wrapMode = TextureWrapMode.Clamp;
             }
 
-            _minecraftFrame.LoadRawTextureData(frame.Pixels);
-            _minecraftFrame.Apply(false, false);
+            _worldColor.LoadRawTextureData(frame.WorldPixels);
+            _worldColor.Apply(false, false);
+            _linearDepth.LoadRawTextureData(frame.DepthPixels);
+            _linearDepth.Apply(false, false);
+            _handLayer.LoadRawTextureData(frame.HandPixels);
+            _handLayer.Apply(false, false);
+            _guiLayer.LoadRawTextureData(frame.GuiPixels);
+            _guiLayer.Apply(false, false);
+
             _frameSequence = frame.Sequence;
+            _lastFrameAt = Time.realtimeSinceStartup;
+            _cameraFrame = frame;
+            _frameNear = frame.NearPlane;
+            _frameFar = frame.FarPlane;
+            if (_compositor != null)
+            {
+                _compositor.SetMinecraftFrames(_worldColor, _linearDepth, _handLayer, _guiLayer,
+                    _frameNear, _frameFar);
+                _compositor.MinecraftOverlayPremultipliedAlpha = false;
+            }
         }
 
-        private void OnGUI()
+        private static Texture2D CreateColorTexture(string textureName, int width, int height)
         {
-            string status = _bridge != null && _bridge.Connected ? "Bridge connected" : "Bridge disconnected";
-            GUI.Box(new Rect(12, 12, 460, 116), status);
-            PlayerState player = _bridge == null ? null : _bridge.LatestPlayer;
-            if (player != null)
-            {
-                GUI.Label(new Rect(24, 38, 438, 22),
-                    string.Format("Mapped player (Cities): X {0:F2}  Y {1:F2}  Z {2:F2}", player.X, player.Y, player.Z));
-            }
-            else
-            {
-                GUI.Label(new Rect(24, 38, 438, 22), "Waiting for Minecraft player state");
-            }
-            GUI.Label(new Rect(24, 60, 438, 22), string.Format(CultureInfo.InvariantCulture,
-                "Cities anchor: X {0:F2}  ground Y {1:F2}  Z {2:F2}",
-                _calibrationAnchor.x, _calibrationGroundHeight, _calibrationAnchor.z));
-            GUI.Label(new Rect(24, 82, 438, 22), string.Format(CultureInfo.InvariantCulture,
-                "Collision radius: {0:F0} m  | terrain grid: 8 m", _bridge == null ? 96f : _bridge.CollisionRadius));
-
-            DrawMinecraftPictureInPicture();
+            Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false, true);
+            texture.name = textureName;
+            texture.filterMode = FilterMode.Bilinear;
+            texture.wrapMode = TextureWrapMode.Clamp;
+            return texture;
         }
 
-        private void DrawMinecraftPictureInPicture()
+        private void DestroyMinecraftTextures()
         {
-            float maxWidth = Mathf.Min(480f, Screen.width * 0.42f);
-            float maxHeight = Mathf.Min(320f, Screen.height * 0.42f);
-            float aspect = _minecraftFrame == null
-                ? 16f / 9f
-                : (float)_minecraftFrame.width / _minecraftFrame.height;
-            float imageWidth = maxWidth;
-            float imageHeight = imageWidth / aspect;
-            if (imageHeight > maxHeight)
-            {
-                imageHeight = maxHeight;
-                imageWidth = imageHeight * aspect;
-            }
-
-            const float border = 2f;
-            const float titleHeight = 22f;
-            float outerWidth = imageWidth + border * 2f;
-            float outerHeight = imageHeight + titleHeight + border * 2f;
-            Rect outer = new Rect(Screen.width - outerWidth - 16f, Screen.height - outerHeight - 16f,
-                outerWidth, outerHeight);
-            GUI.Box(outer, GUIContent.none);
-
-            bool connected = _frameReceiver != null && _frameReceiver.Connected;
-            string relayStatus;
-            if (_minecraftFrame == null)
-                relayStatus = connected ? "Waiting for Minecraft frame" : "Frame relay disconnected";
-            else
-                relayStatus = connected
-                    ? "Minecraft frame #" + _frameSequence
-                    : "Last Minecraft frame #" + _frameSequence + " (relay disconnected)";
-            GUI.Label(new Rect(outer.x + border, outer.y + border, imageWidth, titleHeight), relayStatus);
-            Rect imageRect = new Rect(outer.x + border, outer.y + border + titleHeight, imageWidth, imageHeight);
-            if (_minecraftFrame != null) GUI.DrawTexture(imageRect, _minecraftFrame, ScaleMode.StretchToFill, false);
-            else GUI.Box(imageRect, "Waiting for frame data");
+            if (_worldColor != null) Object.Destroy(_worldColor);
+            if (_linearDepth != null) Object.Destroy(_linearDepth);
+            if (_handLayer != null) Object.Destroy(_handLayer);
+            if (_guiLayer != null) Object.Destroy(_guiLayer);
+            _worldColor = null;
+            _linearDepth = null;
+            _handLayer = null;
+            _guiLayer = null;
+            _textureWidth = _textureHeight = 0;
         }
 
         private void OnDestroy()
         {
             _stoppingSnapshots = true;
+            CitiesFirstPersonCamera.Clear(_gameCamera);
+            if (_compositor != null)
+            {
+                _compositor.PassthroughActive = false;
+                _compositor.SetMinecraftFrames(null, null, null, null, 0.05f, 256f);
+                Object.Destroy(_compositor);
+                _compositor = null;
+            }
             if (_bridge != null) _bridge.Dispose();
             _bridge = null;
             if (_frameReceiver != null) _frameReceiver.Dispose();
             _frameReceiver = null;
-            if (_minecraftFrame != null) Object.Destroy(_minecraftFrame);
-            _minecraftFrame = null;
+            DestroyMinecraftTextures();
+        }
+
+        private static readonly InputKey[] InputKeys = BuildInputKeys();
+
+        private static InputKey[] BuildInputKeys()
+        {
+            List<InputKey> keys = new List<InputKey>();
+            for (int i = 0; i < 26; i++) AddKey(keys, ((char)('A' + i)).ToString(), 65 + i);
+            for (int i = 0; i < 10; i++) AddKey(keys, "Alpha" + i.ToString(CultureInfo.InvariantCulture), 48 + i);
+            AddKey(keys, "Space", 32); AddKey(keys, "Apostrophe", 39); AddKey(keys, "Comma", 44);
+            AddKey(keys, "Minus", 45); AddKey(keys, "Period", 46); AddKey(keys, "Slash", 47);
+            AddKey(keys, "Semicolon", 59); AddKey(keys, "Equals", 61); AddKey(keys, "LeftBracket", 91);
+            AddKey(keys, "Backslash", 92); AddKey(keys, "RightBracket", 93); AddKey(keys, "BackQuote", 96);
+            AddKey(keys, "Escape", 256); AddKey(keys, "Return", 257); AddKey(keys, "Tab", 258);
+            AddKey(keys, "Backspace", 259); AddKey(keys, "Insert", 260); AddKey(keys, "Delete", 261);
+            AddKey(keys, "RightArrow", 262); AddKey(keys, "LeftArrow", 263); AddKey(keys, "DownArrow", 264);
+            AddKey(keys, "UpArrow", 265); AddKey(keys, "PageUp", 266); AddKey(keys, "PageDown", 267);
+            AddKey(keys, "Home", 268); AddKey(keys, "End", 269); AddKey(keys, "CapsLock", 280);
+            for (int i = 1; i <= 12; i++) AddKey(keys, "F" + i.ToString(CultureInfo.InvariantCulture), 289 + i);
+            AddKey(keys, "LeftShift", 340); AddKey(keys, "LeftControl", 341); AddKey(keys, "LeftAlt", 342);
+            AddKey(keys, "RightShift", 344); AddKey(keys, "RightControl", 345); AddKey(keys, "RightAlt", 346);
+            for (int i = 0; i <= 9; i++) AddKey(keys, "Keypad" + i.ToString(CultureInfo.InvariantCulture), 320 + i);
+            AddKey(keys, "KeypadPeriod", 330); AddKey(keys, "KeypadDivide", 331); AddKey(keys, "KeypadMultiply", 332);
+            AddKey(keys, "KeypadMinus", 333); AddKey(keys, "KeypadPlus", 334); AddKey(keys, "KeypadEnter", 335);
+            return keys.ToArray();
+        }
+
+        private static void AddKey(List<InputKey> keys, string unityName, int glfwKey)
+        {
+            object parsed;
+            try { parsed = Enum.Parse(typeof(KeyCode), unityName, true); }
+            catch (ArgumentException) { return; }
+            keys.Add(new InputKey((KeyCode)parsed, glfwKey));
+        }
+
+        private static KeyCode ParseKey(string unityName)
+        {
+            try { return (KeyCode)Enum.Parse(typeof(KeyCode), unityName, true); }
+            catch (ArgumentException) { return KeyCode.None; }
+        }
+
+        private sealed class InputKey
+        {
+            public readonly KeyCode UnityKey;
+            public readonly int GlfwKey;
+            public InputKey(KeyCode unityKey, int glfwKey) { UnityKey = unityKey; GlfwKey = glfwKey; }
         }
     }
 }

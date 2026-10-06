@@ -1,29 +1,32 @@
-# Rendering architecture
+# Passthrough rendering
 
-## Chosen host: Cities
+Cities: Skylines 1 owns the final view. Its gameplay camera follows Minecraft's mapped eye position, yaw, pitch, vertical field of view and aspect. The Minecraft client renders a 640×360 frame and exports four same-frame layers through the local Bridge: world color, positive linear depth, first-person hand and GUI/HUD. Cities samples its own camera depth, draws whichever world surface is nearer, then draws Minecraft's hand and GUI over the result.
 
-Cities: Skylines is the intended final renderer. At this stage it receives Minecraft's live 640×360 RGBA frame and HUD at up to 10 fps and draws them in a picture-in-picture window. Minecraft remains a separate running game and owns Minecraft gameplay. The inset is not a 3D world composite and does not receive city depth.
+Minecraft stays open in a separate window and continues ticking in the background. Cities receives key, mouse, scroll and text events and forwards them to the Minecraft client. F8 in Cities enables or disables passthrough and remote input. The Minecraft void preset helps the city scene fill areas where a Minecraft landscape would otherwise render.
 
-CS1 uses Unity 5.6 Built-in rendering. Unity documents camera depth textures and image effects for this pipeline. Existing CS1 camera mods reach the gameplay camera and can change FOV/near plane. This makes the Cities-host path plausible, but the exact final-frame callback, depth coverage, color ordering and resize behavior are still untested.
+## Current implementation
 
-## Alternative: Minecraft host
+- The Minecraft mod captures the world after `WorldRenderer.render`, captures the hand around `renderHand`, and captures HUD/screens while the main framebuffer is drawn. Triple-buffered OpenGL PBOs and fences provide asynchronous readback.
+- CCF3 carries four RGBA/depth planes plus the camera pose captured with them. Bridge transforms that pose and keeps only the latest complete frame, so Cities renders from the pose that produced its image.
+- Cities uploads the layers to Unity textures and attaches `CitiesNativeCompositor` to the gameplay camera. Its native macOS OpenGL shader compares Minecraft linear depth to the Cities camera depth, composites color, and places hand/HUD on top.
+- The view/camera transform and keyboard/mouse input pass through the state channel. City terrain and nearby static buildings become approximate Minecraft collision and crosshair proxies.
 
-Minecraft owns the final view after Cities exports its final color and depth. Minecraft has direct OpenGL access, but the hard Unity capture step remains. CS1’s older Unity version lacks asynchronous GPU readback, so synchronous readback can stall; moving output to Minecraft also adds projection, tone and presentation conversion. Keep it as a fallback if the Cities image-effect path fails.
+The Java and C# projects compile, but the compositor has not been launched inside Cities. Texture orientation, Unity depth parameters, native OpenGL state, alpha, resizing, and the final callback order are therefore still integration risks. On setup failure the effect logs a warning and shows the Cities image only. Minecraft output is fixed at 640×360 and captured before some post-effects and entity outlines; city depth is limited to what Unity's camera depth texture includes. The mod temporarily disables Minecraft view bobbing and dynamic FOV effects to keep its projection aligned with the host camera, restoring both values when Minecraft closes.
 
-## Stages
+## First live acceptance check
 
-1. Live color inset (implemented).
-2. Terrain and static-building collision proxies (implemented with coarse bounds).
-3. Full-screen camera alignment and color composition.
-4. City terrain depth and Minecraft depth in a common linear convention.
-5. Opaque building depth, with one behind/front marker test.
-6. Props and selected agents only if live depth includes them.
+1. Start both games in 16:9 windows, use an open city street and the Minecraft void world, then calibrate the coordinate pair.
+2. Put the Minecraft player at the anchor. In Cities, enable F8. Confirm the world fills the view and the hand/HUD are visible.
+3. Look at a city building edge. Move the Minecraft camera so Minecraft geometry crosses it; the nearer surface should cover the farther one.
+4. Check W/A/S/D, jump, hotbar, E inventory, mouse look, left-click and right-click while Cities has focus.
+5. Check that city ground supports the player and nearby static building bounds stop movement. Confirm the player can still move and place normal Minecraft blocks in the void world.
+6. Resize, alt-tab and reconnect Bridge; check that stale input is released and the regular Cities camera returns when passthrough goes stale or is switched off.
 
-A full HD RGBA8 plane is about 8.3 MB/frame; three color/depth/overlay planes at 60 fps can approach 1.5 GB/s before extra copies. Use async Minecraft readback, triple buffering, drop stale frames, and profile before raising resolution. Unity 5.6 readback must be measured separately.
+This is a first usable prototype, not full gameplay parity. Cities assets cannot be mined as Minecraft blocks. Moving cars, citizens, props and tunnel floor behavior remain unsupported. City-proxy placement and collision need testing in the actual save.
 
-## Acceptance
+## Reference design
 
-Show both live games together; place a marker behind terrain and behind an opaque building; confirm each is hidden; place another in front and confirm it remains visible. Check resize, pause, alt-tab, and stale frames. A successful shader compile is not proof of occlusion.
+The GTA passthrough project uses the same broad pattern—host camera, Minecraft color/depth, separate overlay, and depth-aware composition—but has GTA-specific camera, input and renderer APIs. This project does not reuse its Windows shared memory or Direct3D/ReShade compositor.
 
 ## Sources
 
@@ -31,4 +34,3 @@ Show both live games together; place a marker behind terrain and behind an opaqu
 - [Unity camera depth manual](https://docs.unity3d.com/es/530/Manual/SL-CameraDepthTexture.html)
 - [GTA reference compositor](https://github.com/VortexisTV/wither-storm-gta5-passthrough/blob/main/gta/src/compositor.cpp)
 - [GTA depth shader](https://github.com/VortexisTV/wither-storm-gta5-passthrough/blob/main/gta/shaders/MCPassthrough.fx)
-- [Minecraft frame exporter](https://github.com/VortexisTV/wither-storm-gta5-passthrough/blob/main/mc-forge/src/main/java/dev/rehan/passthrough/client/FrameExporter.java)

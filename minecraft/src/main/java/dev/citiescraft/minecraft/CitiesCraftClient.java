@@ -6,18 +6,31 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.render.Camera;
 import net.minecraft.util.math.Vec3d;
 
 public final class CitiesCraftClient implements ClientModInitializer {
     private static final BridgeLink BRIDGE = new BridgeLink();
     private int tickCounter;
     private Object activeWorld;
+    private boolean originalBobView;
+    private double originalFovEffectScale;
 
     @Override
     public void onInitializeClient() {
+        // Cities owns keyboard focus while Minecraft still needs to tick and render in the background.
+        MinecraftClient minecraft = MinecraftClient.getInstance();
+        minecraft.options.pauseOnLostFocus = false;
+        originalBobView = minecraft.options.getBobView().getValue();
+        originalFovEffectScale = minecraft.options.getFovEffectScale().getValue();
+        // Keep the exported projection stable so it matches the Cities camera.
+        minecraft.options.getBobView().setValue(false);
+        minecraft.options.getFovEffectScale().setValue(0.0);
         BRIDGE.start();
         FrameExporter.start();
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
+            client.options.getBobView().setValue(originalBobView);
+            client.options.getFovEffectScale().setValue(originalFovEffectScale);
             BRIDGE.stop();
             FrameExporter.stop();
         });
@@ -26,6 +39,10 @@ public final class CitiesCraftClient implements ClientModInitializer {
     }
 
     private void tick(MinecraftClient client) {
+        // Keep this disabled if the user changes the option while passthrough is active.
+        client.options.pauseOnLostFocus = false;
+        client.options.getBobView().setValue(false);
+        client.options.getFovEffectScale().setValue(0.0);
         if (client.world != activeWorld) {
             activeWorld = client.world;
             CityCollisionWorld.clear();
@@ -34,6 +51,14 @@ public final class CitiesCraftClient implements ClientModInitializer {
         if ((tickCounter++ % 3) != 0) return;
         Vec3d pos = client.player.getPos();
         BRIDGE.publishPlayer(pos.x, pos.y, pos.z, client.player.getYaw(), client.player.getPitch());
+    }
+
+    static void publishRenderedView(MinecraftClient client) {
+        Camera camera = client.gameRenderer.getCamera();
+        if (camera == null || !camera.isReady()) return;
+        Vec3d eye = camera.getPos();
+        BRIDGE.publishView(eye.x, eye.y, eye.z, camera.getYaw(), camera.getPitch(),
+                client.options.getFov().getValue(), (float) FrameExporter.WIDTH / FrameExporter.HEIGHT);
     }
 
     private void renderHud(DrawContext context, float tickDelta) {

@@ -25,12 +25,13 @@ public final class BridgeServer implements AutoCloseable {
     private static final int PORT = Integer.getInteger("citiescraft.port", 25598);
     private static final int FRAME_PORT = Integer.getInteger("citiescraft.framePort", 25599);
     private static final int MAX_LINE_BYTES = 64 * 1024;
-    private static final int FRAME_HEADER_BYTES = 24;
+    private static final int FRAME_HEADER_BYTES = 96;
     private static final int MAX_FRAME_WIDTH = 640;
     private static final int MAX_FRAME_HEIGHT = 360;
-    private static final int MAX_FRAME_BYTES = MAX_FRAME_WIDTH * MAX_FRAME_HEIGHT * 4;
-    private static final byte[] FRAME_MAGIC = {'C', 'C', 'F', '1'};
-    private static final byte[] FRAME_HANDSHAKE_OK = "CCFRAME/1\tOK\n".getBytes(StandardCharsets.US_ASCII);
+    private static final int MAX_PLANE_BYTES = MAX_FRAME_WIDTH * MAX_FRAME_HEIGHT * 4;
+    private static final long MAX_FRAME_BYTES = (long) MAX_PLANE_BYTES * 4L;
+    private static final byte[] FRAME_MAGIC = {'C', 'C', 'F', '3'};
+    private static final byte[] FRAME_HANDSHAKE_OK = "CCFRAME/3\tOK\n".getBytes(StandardCharsets.US_ASCII);
     private static final BridgeConfig CONFIG = BridgeConfig.load();
 
     private final Object peersLock = new Object();
@@ -49,6 +50,7 @@ public final class BridgeServer implements AutoCloseable {
     private long nextOutputSequence;
     private long nextCityWorldSequence;
     private String latestPlayer;
+    private String latestView;
     private String latestCamera;
     private String latestCityWorld;
     private volatile boolean closed;
@@ -144,8 +146,8 @@ public final class BridgeServer implements AutoCloseable {
 
     private static Role readFrameHandshake(InputStream input) throws IOException {
         String line = readAsciiLine(input, 64);
-        if ("CCFRAME/1\tminecraft".equals(line)) return Role.MINECRAFT;
-        if ("CCFRAME/1\tcities".equals(line)) return Role.CITIES;
+        if ("CCFRAME/3\tminecraft".equals(line)) return Role.MINECRAFT;
+        if ("CCFRAME/3\tcities".equals(line)) return Role.CITIES;
         return null;
     }
 
@@ -165,23 +167,56 @@ public final class BridgeServer implements AutoCloseable {
             int width = fields.getInt();
             int height = fields.getInt();
             long sequence = fields.getLong();
-            int payloadLength = fields.getInt();
+            long timestampNanos = fields.getLong();
+            int worldLength = fields.getInt();
+            int depthLength = fields.getInt();
+            int handLength = fields.getInt();
+            int guiLength = fields.getInt();
+            int depthEncoding = fields.getInt();
+            float nearPlane = fields.getFloat();
+            float farPlane = fields.getFloat();
+            double cameraX = fields.getDouble();
+            double cameraY = fields.getDouble();
+            double cameraZ = fields.getDouble();
+            float cameraYaw = fields.getFloat();
+            float cameraPitch = fields.getFloat();
+            float verticalFov = fields.getFloat();
+            float aspect = fields.getFloat();
             long expectedLength = (long) width * (long) height * 4L;
             if (width <= 0 || width > MAX_FRAME_WIDTH || height <= 0 || height > MAX_FRAME_HEIGHT
-                    || sequence < 0 || expectedLength <= 0 || expectedLength > MAX_FRAME_BYTES
-                    || payloadLength != expectedLength) {
-                throw new IOException("invalid frame dimensions, sequence, or payload length");
+                    || sequence < 0 || expectedLength <= 0 || expectedLength > MAX_PLANE_BYTES
+                    || worldLength != expectedLength || depthLength != expectedLength
+                    || handLength != expectedLength || guiLength != expectedLength
+                    || (long) worldLength + depthLength + handLength + guiLength > MAX_FRAME_BYTES
+                    || depthEncoding != 1 || !Float.isFinite(nearPlane) || !Float.isFinite(farPlane)
+                    || nearPlane <= 0.0f || farPlane <= nearPlane
+                    || !Double.isFinite(cameraX) || !Double.isFinite(cameraY) || !Double.isFinite(cameraZ)
+                    || !Float.isFinite(cameraYaw) || !Float.isFinite(cameraPitch)
+                    || !Float.isFinite(verticalFov) || verticalFov <= 0.0f || verticalFov >= 180.0f
+                    || !Float.isFinite(aspect) || aspect < 0.25f || aspect > 5.0f) {
+                throw new IOException("invalid frame dimensions, camera metadata, or payload length");
             }
 
-            byte[] rgba = new byte[payloadLength];
-            input.readFully(rgba);
+            byte[] worldRgba = new byte[worldLength];
+            byte[] linearDepth = new byte[depthLength];
+            byte[] handRgba = new byte[handLength];
+            byte[] guiRgba = new byte[guiLength];
+            input.readFully(worldRgba);
+            input.readFully(linearDepth);
+            input.readFully(handRgba);
+            input.readFully(guiRgba);
+            WorldTransform.Point citiesCamera = CONFIG.transform.toCities(cameraX, cameraY, cameraZ);
+            double citiesYaw = CONFIG.transform.yawToCities(cameraYaw);
             synchronized (frameLock) {
                 if (frameMinecraft != peer) return;
                 if (sequence <= peer.lastSequence) continue;
                 peer.lastSequence = sequence;
                 if (nextOutputSequence < 0) throw new IOException("frame output sequence exhausted");
                 long outputSequence = nextOutputSequence++;
-                latestFrame = new FrameSnapshot(frameGeneration, width, height, outputSequence, rgba);
+                latestFrame = new FrameSnapshot(frameGeneration, width, height, outputSequence,
+                        timestampNanos, nearPlane, farPlane,
+                        citiesCamera.x, citiesCamera.y, citiesCamera.z, citiesYaw,
+                        cameraPitch, verticalFov, aspect, worldRgba, linearDepth, handRgba, guiRgba);
                 frameLock.notifyAll();
             }
         }
@@ -218,8 +253,25 @@ public final class BridgeServer implements AutoCloseable {
         output.writeInt(frame.width);
         output.writeInt(frame.height);
         output.writeLong(frame.sequence);
-        output.writeInt(frame.rgba.length);
-        output.write(frame.rgba);
+        output.writeLong(frame.timestampNanos);
+        output.writeInt(frame.worldRgba.length);
+        output.writeInt(frame.linearDepth.length);
+        output.writeInt(frame.handRgba.length);
+        output.writeInt(frame.guiRgba.length);
+        output.writeInt(1); // float32 positive linear camera-space metres
+        output.writeFloat(frame.nearPlane);
+        output.writeFloat(frame.farPlane);
+        output.writeDouble(frame.cameraX);
+        output.writeDouble(frame.cameraY);
+        output.writeDouble(frame.cameraZ);
+        output.writeFloat((float) frame.cameraYaw);
+        output.writeFloat(frame.cameraPitch);
+        output.writeFloat(frame.verticalFov);
+        output.writeFloat(frame.aspect);
+        output.write(frame.worldRgba);
+        output.write(frame.linearDepth);
+        output.write(frame.handRgba);
+        output.write(frame.guiRgba);
         output.flush();
     }
 
@@ -262,12 +314,13 @@ public final class BridgeServer implements AutoCloseable {
                 if (role == Role.MINECRAFT) minecraft = peer;
                 else cities = peer;
                 peer.send("WELCOME\t1\t" + UUID.randomUUID());
-                peer.send("SETTINGS\t" + CONFIG.collisionRadius);
+                peer.send("SETTINGS\t" + CONFIG.collisionRadius + "\t" + CONFIG.scale);
                 if (role == Role.MINECRAFT) {
                     if (latestCamera != null) peer.send(latestCamera);
                     if (latestCityWorld != null) peer.send(latestCityWorld);
-                } else if (latestPlayer != null) {
-                    peer.send(latestPlayer);
+                } else {
+                    if (latestPlayer != null) peer.send(latestPlayer);
+                    if (latestView != null) peer.send(latestView);
                 }
             }
             System.out.println("Connected: " + role.wireName);
@@ -314,6 +367,39 @@ public final class BridgeServer implements AutoCloseable {
             synchronized (peersLock) {
                 latestPlayer = mapped;
                 if (cities != null) cities.send(mapped);
+            }
+            return;
+        }
+
+        if (sender.role == Role.MINECRAFT && fields.length == 9 && "VIEW".equals(fields[0])) {
+            long sequence = parseSequence(fields[1]);
+            for (int i = 2; i <= 8; i++) parseFinite(fields[i]);
+            double fov = parseFinite(fields[7]);
+            double aspect = parseFinite(fields[8]);
+            if (fov <= 0.0 || fov >= 180.0 || aspect < 0.25 || aspect > 5.0) {
+                throw new ProtocolException("view", "view FOV or aspect ratio is outside supported bounds");
+            }
+            if (sequence <= sender.lastViewSequence) return;
+            sender.lastViewSequence = sequence;
+            WorldTransform.Point city = CONFIG.transform.toCities(
+                    parseFinite(fields[2]), parseFinite(fields[3]), parseFinite(fields[4]));
+            String mapped = "VIEW\t" + sequence + "\t" + city.x + "\t" + city.y + "\t" + city.z
+                    + "\t" + CONFIG.transform.yawToCities(parseFinite(fields[5]))
+                    + "\t" + parseFinite(fields[6]) + "\t" + fov + "\t" + aspect;
+            synchronized (peersLock) {
+                latestView = mapped;
+                if (cities != null) cities.send(mapped);
+            }
+            return;
+        }
+
+        if (sender.role == Role.CITIES && fields.length >= 4 && "INPUT".equals(fields[0])) {
+            long sequence = parseSequence(fields[1]);
+            if (sequence <= sender.lastInputSequence) return;
+            validateInput(fields);
+            sender.lastInputSequence = sequence;
+            synchronized (peersLock) {
+                if (minecraft != null) minecraft.send(line);
             }
             return;
         }
@@ -405,6 +491,36 @@ public final class BridgeServer implements AutoCloseable {
         if (result.length() > MAX_LINE_BYTES) throw new ProtocolException("snapshot", "mapped city snapshot is too large");
         sender.lastSnapshotSequence = sequence;
         return result.toString();
+    }
+
+    private static void validateInput(String[] fields) throws ProtocolException {
+        String kind = fields[2];
+        if ("KEY".equals(kind) && fields.length == 7) {
+            parseBoundedInt(fields[3], 0, 512, "GLFW key");
+            parseBoundedInt(fields[4], 0, 65535, "scan code");
+            parseBoundedInt(fields[5], 0, 2, "key action");
+            parseBoundedInt(fields[6], 0, 65535, "key modifiers");
+        } else if ("CURSOR".equals(kind) && fields.length == 5) {
+            double x = parseFinite(fields[3]);
+            double y = parseFinite(fields[4]);
+            if (x < 0.0 || x > 1.0 || y < 0.0 || y > 1.0)
+                throw new ProtocolException("input", "normalized cursor coordinates must be in [0,1]");
+        } else if ("LOOK".equals(kind) && fields.length == 5) {
+            if (Math.abs(parseFinite(fields[3])) > 4096.0 || Math.abs(parseFinite(fields[4])) > 4096.0)
+                throw new ProtocolException("input", "mouse look delta exceeds the supported range");
+        } else if ("BUTTON".equals(kind) && fields.length == 6) {
+            parseBoundedInt(fields[3], 0, 7, "mouse button");
+            parseBoundedInt(fields[4], 0, 2, "mouse action");
+            parseBoundedInt(fields[5], 0, 65535, "mouse modifiers");
+        } else if ("SCROLL".equals(kind) && fields.length == 5) {
+            if (Math.abs(parseFinite(fields[3])) > 64.0 || Math.abs(parseFinite(fields[4])) > 64.0)
+                throw new ProtocolException("input", "scroll delta exceeds the supported range");
+        } else if ("TEXT".equals(kind) && fields.length == 5) {
+            parseBoundedInt(fields[3], 0, 1114111, "Unicode code point");
+            parseBoundedInt(fields[4], 0, 65535, "text modifiers");
+        } else {
+            throw new ProtocolException("input", "input event has an unknown kind or malformed fields");
+        }
     }
 
     private static void appendBox(StringBuilder result, String type, WorldTransform.Bounds bounds) {
@@ -525,6 +641,8 @@ public final class BridgeServer implements AutoCloseable {
         final Socket socket;
         final PrintWriter writer;
         long lastSequence = -1;
+        long lastInputSequence = -1;
+        long lastViewSequence = -1;
         long lastSnapshotSequence = -1;
         Peer(Role role, Socket socket) throws IOException {
             this.role = role;
@@ -552,13 +670,43 @@ public final class BridgeServer implements AutoCloseable {
         final int width;
         final int height;
         final long sequence;
-        final byte[] rgba;
-        FrameSnapshot(long generation, int width, int height, long sequence, byte[] rgba) {
+        final long timestampNanos;
+        final float nearPlane;
+        final float farPlane;
+        final double cameraX;
+        final double cameraY;
+        final double cameraZ;
+        final double cameraYaw;
+        final float cameraPitch;
+        final float verticalFov;
+        final float aspect;
+        final byte[] worldRgba;
+        final byte[] linearDepth;
+        final byte[] handRgba;
+        final byte[] guiRgba;
+        FrameSnapshot(long generation, int width, int height, long sequence, long timestampNanos,
+                      float nearPlane, float farPlane, double cameraX, double cameraY, double cameraZ,
+                      double cameraYaw, float cameraPitch, float verticalFov, float aspect,
+                      byte[] worldRgba, byte[] linearDepth,
+                      byte[] handRgba, byte[] guiRgba) {
             this.generation = generation;
             this.width = width;
             this.height = height;
             this.sequence = sequence;
-            this.rgba = rgba;
+            this.timestampNanos = timestampNanos;
+            this.nearPlane = nearPlane;
+            this.farPlane = farPlane;
+            this.cameraX = cameraX;
+            this.cameraY = cameraY;
+            this.cameraZ = cameraZ;
+            this.cameraYaw = cameraYaw;
+            this.cameraPitch = cameraPitch;
+            this.verticalFov = verticalFov;
+            this.aspect = aspect;
+            this.worldRgba = worldRgba;
+            this.linearDepth = linearDepth;
+            this.handRgba = handRgba;
+            this.guiRgba = guiRgba;
         }
     }
 
