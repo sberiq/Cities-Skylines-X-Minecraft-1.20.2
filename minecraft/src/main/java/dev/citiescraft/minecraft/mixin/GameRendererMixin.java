@@ -44,12 +44,12 @@ abstract class GameRendererMixin {
         if (framebuffer == MinecraftClient.getInstance().getFramebuffer()) FrameExporter.beginGuiLayer();
     }
 
-    @Redirect(method = "render(FJZ)V",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gl/Framebuffer;endWrite()V"))
-    private void citiescraft$finishGuiLayer(Framebuffer framebuffer) {
-        if (framebuffer == MinecraftClient.getInstance().getFramebuffer())
-            FrameExporter.finishGuiLayerAndEndWrite(framebuffer);
-        else framebuffer.endWrite();
+    @Inject(method = "render(FJZ)V",
+            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/gui/DrawContext;draw()V",
+                    shift = At.Shift.AFTER))
+    private void citiescraft$finishGuiLayer(float tickDelta, long startTime, boolean tick,
+                                             CallbackInfo callbackInfo) {
+        FrameExporter.finishGuiLayer(MinecraftClient.getInstance().getFramebuffer());
     }
 
     @Inject(method = "render(FJZ)V", at = @At("TAIL"))

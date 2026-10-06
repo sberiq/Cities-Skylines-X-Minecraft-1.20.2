@@ -13,24 +13,19 @@ public final class CitiesCraftClient implements ClientModInitializer {
     private static final BridgeLink BRIDGE = new BridgeLink();
     private int tickCounter;
     private Object activeWorld;
+    private boolean clientOptionsCaptured;
     private boolean originalBobView;
     private double originalFovEffectScale;
 
     @Override
     public void onInitializeClient() {
-        // Cities owns keyboard focus while Minecraft still needs to tick and render in the background.
-        MinecraftClient minecraft = MinecraftClient.getInstance();
-        minecraft.options.pauseOnLostFocus = false;
-        originalBobView = minecraft.options.getBobView().getValue();
-        originalFovEffectScale = minecraft.options.getFovEffectScale().getValue();
-        // Keep the exported projection stable so it matches the Cities camera.
-        minecraft.options.getBobView().setValue(false);
-        minecraft.options.getFovEffectScale().setValue(0.0);
         BRIDGE.start();
         FrameExporter.start();
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
-            client.options.getBobView().setValue(originalBobView);
-            client.options.getFovEffectScale().setValue(originalFovEffectScale);
+            if (clientOptionsCaptured && client.options != null) {
+                client.options.getBobView().setValue(originalBobView);
+                client.options.getFovEffectScale().setValue(originalFovEffectScale);
+            }
             BRIDGE.stop();
             FrameExporter.stop();
         });
@@ -39,8 +34,16 @@ public final class CitiesCraftClient implements ClientModInitializer {
     }
 
     private void tick(MinecraftClient client) {
+        if (client.options == null) return;
+        if (!clientOptionsCaptured) {
+            originalBobView = client.options.getBobView().getValue();
+            originalFovEffectScale = client.options.getFovEffectScale().getValue();
+            clientOptionsCaptured = true;
+        }
         // Keep this disabled if the user changes the option while passthrough is active.
+        // Cities owns keyboard focus while Minecraft still needs to tick and render in the background.
         client.options.pauseOnLostFocus = false;
+        // Keep the exported projection stable so it matches the Cities camera.
         client.options.getBobView().setValue(false);
         client.options.getFovEffectScale().setValue(0.0);
         if (client.world != activeWorld) {

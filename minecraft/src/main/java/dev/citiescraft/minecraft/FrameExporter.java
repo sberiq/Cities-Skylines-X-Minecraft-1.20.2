@@ -223,8 +223,8 @@ public final class FrameExporter {
         beginTransparentLayer();
     }
 
-    /** Captures HUD/screens, composites them back, then lets vanilla blit its normal framebuffer. */
-    public static void finishGuiLayerAndEndWrite(Framebuffer mainFramebuffer) {
+    /** Captures HUD/screens and composites them back after Minecraft flushes its GUI draw context. */
+    public static void finishGuiLayer(Framebuffer mainFramebuffer) {
         if (currentLayer != null && layerResourcesReady) {
             captureOverlayPbo(currentLayer.guiPbo);
             currentLayer.guiCaptured = true;
@@ -236,7 +236,6 @@ public final class FrameExporter {
             if (!currentLayer.inFlight) currentLayer = null;
             else currentLayer = null;
         }
-        mainFramebuffer.endWrite();
     }
 
     public static void stop() {
